@@ -36,9 +36,28 @@ adapt it for an API-only host.
 ## GitHub Actions
 
 The CI workflow runs on every push, on pull requests targeting `main`, and
-manually from the repository's Actions tab. It uses Node.js 22 and installs
+manually from the repository's Actions tab. It uses Node.js 24 and installs
 locked dependencies with `npm ci`. No production secrets are required.
 
 Checks: JavaScript syntax and the Node.js test suite. Tests use mocks and local
-fixtures; they do not require production Supabase or AI credentials. This
-workflow does not deploy the API or apply database migrations.
+fixtures; they do not require production Supabase or AI credentials. After checks pass on `main`, the workflow deploys the API to EC2.
+Database migrations are not run automatically.
+
+## Automatic EC2 deployment
+
+Pushes to `main` deploy after CI succeeds. Pull requests only run checks.
+Manual runs on `main` also deploy. Runs on `main` are serialized so a newer
+push does not interrupt an active deployment.
+
+Repository variables: `EC2_HOST`, `EC2_USER`.
+Repository secrets: `EC2_SSH_KEY` (dedicated deployment key),
+`EC2_KNOWN_HOSTS` (verified server host keys). Production application secrets
+stay on EC2; do not add them to the frontend build.
+
+`deployment/deploy.sh` fetches and checks out the exact checked commit in
+`/home/ubuntu/apps/backend`, installs production dependencies under Node.js 24,
+restarts PM2 process `rtr-backend`, and checks `/api/health`. A failed deploy
+attempts to restore the previous commit, dependencies and process. Local
+changes to tracked server files stop deployment. `.env` and persistent files
+under `/home/ubuntu/app-data` are preserved. Code runs from a detached commit;
+use `git log -1` to inspect the deployed revision.
