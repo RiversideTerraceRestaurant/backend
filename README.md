@@ -32,3 +32,13 @@ adapt it for an API-only host.
 ## Checks
 
 `npm test`, `npm run lint`.
+
+## GitHub Actions
+
+The CI workflow runs on every push, on pull requests targeting `main`, and
+manually from the repository's Actions tab. It uses Node.js 22 and installs
+locked dependencies with `npm ci`. No production secrets are required.
+
+Checks: JavaScript syntax and the Node.js test suite. Tests use mocks and local
+fixtures; they do not require production Supabase or AI credentials. This
+workflow does not deploy the API or apply database migrations.
