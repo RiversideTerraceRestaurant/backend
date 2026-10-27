@@ -39,28 +39,12 @@ jobs:
     name: Deploy to EC2
     needs: checks
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, rtr-production]
     timeout-minutes: 15
-    env:
-      EC2_HOST: ${{ vars.EC2_HOST }}
-      EC2_USER: ${{ vars.EC2_USER }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Configure SSH
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
-        run: |
-          test -n "$EC2_HOST" && test -n "$EC2_USER"
-          test -n "$EC2_SSH_KEY" && test -n "$EC2_KNOWN_HOSTS"
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
       - name: Deploy backend and verify health
-        run: |
-          ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 "$EC2_USER@$EC2_HOST" \
-            bash -s -- "$GITHUB_SHA" < deployment/deploy.sh
+        run: bash deployment/deploy.sh "$GITHUB_SHA"
