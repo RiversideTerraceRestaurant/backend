@@ -100,3 +100,34 @@ export function menuFlavourNotes(item) {
     [/\b(?:crispy|crunchy|toasted bread)\b/, 'The stated crispy/crunchy/toasted-bread component may add a crisp contrast.'],
   ].filter(([pattern]) => pattern.test(text)).map(([, note]) => note);
 }
+
+// Deterministic tasting notes also work during provider rate limits; no extra AI call.
+export function menuFlavourSummary(item, language = 'en') {
+  const text = normalize(item.description);
+  const profiles = [
+    ['rich', /\b(?:salmon|cream|cheese|butter|parmesan|mozzarella)\b/],
+    ['tart', /\b(?:tomato(?:es)?|orange|pineapple|lime|lemon|capers?)\b/],
+    ['salty', /\b(?:parmesan|capers?|olives?)\b/],
+    ['aromatic', /\b(?:garlic|pesto|rocket|rockets|arugula|mint|dill)\b|thi la/],
+    ['sweet', /\b(?:lychee(?:s)?|melon|orange|pineapple|honey|sweet potatoes)\b/],
+    ['smoky', /\bsmoked\b/],
+    ['spicy', /\b(?:spicy|chili|chilli|jalapeno|sriracha)\b/],
+  ].filter(([, pattern]) => pattern.test(text)).map(([key]) => key);
+  if (!profiles.length) return '';
+  const wording = {
+    en: ['It combines {notes}.', 'richness', 'gentle acidity', 'salty depth', 'aromatic notes', 'sweetness', 'smoky notes', 'chili heat'],
+    vi: ['Hương vị kết hợp {notes}.', 'vị béo', 'chút chua thanh', 'vị mặn đậm đà', 'hương thơm', 'vị ngọt', 'hương khói', 'vị cay'],
+    ko: ['{notes}이 어우러집니다.', '풍부한 맛', '은은한 산미', '짭짤한 풍미', '향긋한 풍미', '단맛', '훈연 향', '매운맛'],
+    ja: ['{notes}が調和します。', 'コク', '穏やかな酸味', '塩味のうまみ', '香り', '甘み', '燻製の香り', '辛み'],
+    cn: ['风味融合了{notes}。', '醇厚感', '清爽酸味', '咸鲜味', '清香', '甜味', '烟熏香气', '辣味'],
+    ru: ['Во вкусе сочетаются {notes}.', 'насыщенность', 'лёгкая кислинка', 'солоноватые ноты', 'ароматические ноты', 'сладость', 'дымные ноты', 'острота'],
+    kz: ['Дәмінде {notes} үйлеседі.', 'қанық дәм', 'жеңіл қышқылдық', 'тұзды реңк', 'хош иіс', 'тәттілік', 'ысталған хош иіс', 'ащылық'],
+    es: ['Combina {notes}.', 'untuosidad', 'acidez suave', 'notas saladas', 'notas aromáticas', 'dulzor', 'notas ahumadas', 'picante'],
+    fr: ['Les saveurs associent {notes}.', 'rondeur', 'acidité douce', 'notes salées', 'notes aromatiques', 'douceur', 'notes fumées', 'piquant'],
+    it: ['Il gusto unisce {notes}.', 'ricchezza', 'delicata acidità', 'note sapide', 'note aromatiche', 'dolcezza', 'note affumicate', 'piccantezza'],
+  };
+  const words = wording[language] || wording.en;
+  const labels = Object.fromEntries(['rich', 'tart', 'salty', 'aromatic', 'sweet', 'smoky', 'spicy'].map((key, index) => [key, words[index + 1]]));
+  const locale = language === 'cn' ? 'zh' : language === 'kz' ? 'kk' : language;
+  return words[0].replace('{notes}', new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(profiles.map(key => labels[key])));
+}

@@ -147,3 +147,7 @@ cooking methods. If generation is unavailable, the response shows actual recipe
 descriptions alongside the eligible cards. A precisely recognized alcohol-free
 follow-up to an existing resolved drink request can still be safely retrieved
 when intent extraction is unavailable, without guessing new free-text requests.
+
+During answer-generation rate limits, deterministic tasting summaries derived
+from listed ingredients supplement recipe descriptions in all supported languages.
+They do not infer heat, crispness or unspecified fruit varieties.

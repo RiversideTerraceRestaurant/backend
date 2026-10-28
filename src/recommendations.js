@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { preferencesSchema, languageSchema } from './validation.js';
 
-import { normalize, priceWithVAT, requestsAlcoholFree, isAlcoholOnlyFollowup, beverageProfile, menuFlavourNotes } from './menu-filters.js';
+import { normalize, priceWithVAT, requestsAlcoholFree, isAlcoholOnlyFollowup, beverageProfile, menuFlavourNotes, menuFlavourSummary } from './menu-filters.js';
 import { createMenuRetriever } from './menu-retrieval.js';
-export { filterItems, normalize, priceWithVAT, requestsAlcoholFree, isAlcoholOnlyFollowup, beverageProfile, menuFlavourNotes } from './menu-filters.js';
+export { filterItems, normalize, priceWithVAT, requestsAlcoholFree, isAlcoholOnlyFollowup, beverageProfile, menuFlavourNotes, menuFlavourSummary } from './menu-filters.js';
 
 const memorySchema = z.object({
   summary: z.string().trim().max(700),
@@ -190,7 +190,8 @@ export async function recommend({ input, items = [], categories = [], counts = [
   onState({ ...retrieved.state, intent, memory, questions, selectedIds: selection.map(item => item.id), selectedItems: selection.map(item => ({ id: item.id, name: item.name })) });
   let reply = selection.length ? `${strings.match}\n\n${selection.map(item => {
     const description = item[`description_${input.language}`] || item.description;
-    return description ? `${item.name}: ${description.slice(0, 350)}` : item.name;
+    const tasting = menuFlavourSummary(item, input.language);
+    return [description ? `${item.name}: ${description.slice(0, 350)}` : item.name, tasting].filter(Boolean).join('. ');
   }).join('\n\n')}` : strings.empty;
   if (intent.popular && !popularityAvailable) reply = `${strings.noPopularity} ${reply}`;
   if (mode === 'ai' && selection.length) {

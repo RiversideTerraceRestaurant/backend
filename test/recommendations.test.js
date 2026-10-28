@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { filterItems, priceWithVAT, recommend } from '../src/recommendations.js';
 import { chatSchema } from '../src/validation.js';
-import { menuFlavourNotes } from '../src/menu-filters.js';
+import { menuFlavourNotes, menuFlavourSummary } from '../src/menu-filters.js';
 
 const items = [
   { id: '1', name: 'Garden salad', description: 'Tomato, lettuce and olive oil', price: 90000, vat: 10, badges: ['vegan', 'vegetarian'] },
@@ -356,4 +356,26 @@ test('flavour guidance is specific to each actual recipe and does not infer heat
   assert.ok(!notes.some(note => /Garlic|Capers|Orange/.test(note)));
   assert.ok(menuFlavourNotes({ description: 'Spaghetti, blackened salmon, garlic, parmesan' }).some(note => note.includes('no crispness')));
   assert.ok(menuFlavourNotes({ description: 'Lychee, pineapple & melon juice' }).some(note => note.includes('do not say watermelon')));
+});
+
+
+test('provider outages still produce ingredient-grounded flavour descriptions', async () => {
+  const salmon = { id: 'salmon', name: 'SALMONE PASTA', description: 'Salmon, cream & cherry tomatoes', description_vi: 'Cá hồi, kem và cà chua bi', price: 200000, vat: 10, badges: [] };
+  const result = await recommend({ input: input({ action: 'chat' }), items: [salmon], ai: { json: async (_system, data) => {
+    if (!data.dishes) return { keywords: ['salmon'] };
+    throw new Error('429 rate limit');
+  } } });
+  assert.equal(result.mode, 'filters');
+  assert.match(result.reply, /vị béo/);
+  assert.match(result.reply, /chua thanh/);
+  assert.doesNotMatch(result.reply, /vị cay|hương khói|giòn/);
+});
+
+test('deterministic tasting notes stay within listed ingredients across supported languages', () => {
+  const dish = { description: 'Spaghetti, blackened salmon, garlic, parmesan' };
+  for (const language of ['en', 'vi', 'ko', 'ja', 'cn', 'ru', 'kz', 'es', 'fr', 'it']) assert.ok(menuFlavourSummary(dish, language));
+  const vi = menuFlavourSummary(dish, 'vi');
+  assert.match(vi, /vị béo/);
+  assert.doesNotMatch(vi, /chua thanh|vị ngọt|vị cay|hương khói|giòn/);
+  assert.equal(menuFlavourSummary({ description: '' }, 'vi'), '');
 });
