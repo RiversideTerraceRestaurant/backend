@@ -112,3 +112,13 @@ are relaxed; price, diet, avoided ingredients, mildness and category constraints
 still apply. Previous-item detail questions are not replaced with unrelated
 alternatives. If no eligible dishes exist, an empty result is returned honestly.
 Menu cards remain available if answer generation fails after intent extraction.
+
+## Recommendation order and descriptions
+
+Eligible dishes in categories whose name/display name contains Special or
+Specials are ranked and selected before other categories, including multiple
+matching dishes from that category. Dietary, ingredient and price constraints
+are applied first. The assistant receives each selected dish's actual category
+and Special status, and explains ingredient/flavour combinations in short,
+natural paragraphs using only supplied recipe information. Special status is
+never inferred from a dish's name or assigned to an unrelated category.

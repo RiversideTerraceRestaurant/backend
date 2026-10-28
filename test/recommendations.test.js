@@ -302,3 +302,48 @@ test('no safe alternatives means an honest empty result, never dishes violating 
   assert.equal(generations, 0);
   assert.match(result.reply, /Chưa có món phù hợp/);
 });
+
+test('eligible Special dishes precede regular dishes without category diversity pushing specials down', async () => {
+  const categories = [
+    { id: 'special', name: 'chef_specials', display_name: 'Special' },
+    { id: 'pasta', name: 'pasta', display_name: 'Pasta' },
+    { id: 'pizza', name: 'pizza', display_name: 'Pizza' },
+  ];
+  const specials = [1, 2, 3].map(n => ({ id: `special-${n}`, name: `Special salmon ${n}`, description: 'Salmon with orange-butter sauce', price: 300000 + n, vat: 0, category_id: 'special', badges: [] }));
+  const regular = [
+    { id: 'pasta', name: 'Salmon pasta', description: 'Salmon, cream and tomatoes', price: 100000, vat: 0, category_id: 'pasta', badges: [] },
+    { id: 'pizza', name: 'Salmon pizza', description: 'Salmon and cheese', price: 120000, vat: 0, category_id: 'pizza', badges: [] },
+  ];
+  const result = await recommend({ input: input(), items: [...regular, ...specials], categories, ai: offline });
+  assert.deepEqual(result.items.slice(0, 3).map(item => item.id), specials.map(item => item.id));
+  assert.equal(result.items[3].id, 'pasta');
+});
+
+test('Special priority never overrides budget, dietary restrictions or the requested ingredient', async () => {
+  const categories = [{ id: 'special', name: 'special', display_name: 'Special' }, { id: 'pasta', name: 'pasta', display_name: 'Pasta' }];
+  const catalog = [
+    { id: 'expensive', name: 'Special tofu', description: 'Tofu and tomato', price: 300000, vat: 0, category_id: 'special', badges: ['vegan'] },
+    { id: 'meat', name: 'Special beef', description: 'Beef and cream', price: 90000, vat: 0, category_id: 'special', badges: [] },
+    { id: 'other', name: 'Special salad', description: 'Lettuce and olive oil', price: 80000, vat: 0, category_id: 'special', badges: ['vegan'] },
+    { id: 'regular', name: 'Tofu pasta', description: 'Tofu and tomato', price: 90000, vat: 0, category_id: 'pasta', badges: ['vegan'] },
+  ];
+  const result = await recommend({ input: input({ action: 'chat', preferences: { diet: 'vegan', maxPrice: 100000 } }), items: catalog, categories, ai: { json: async (_system, data) => data.dishes ? { reply: 'Try tofu pasta.' } : { keywords: ['tofu'], diet: 'vegan' } } });
+  assert.deepEqual(result.items.map(item => item.id), ['regular']);
+});
+
+test('reply generation receives Special status and is instructed to explain flavour combinations in dish order', async () => {
+  const categories = [{ id: 'special', name: 'special', display_name: 'Special' }];
+  const salmon = { id: 'salmon', name: 'BAKED SALMON', description: 'Salmon with orange-butter sauce and mashed sweet potatoes', price: 300000, vat: 0, category_id: 'special', badges: [] };
+  let generated = false;
+  const result = await recommend({ input: input({ action: 'chat' }), items: [salmon], categories, ai: { json: async (system, data) => {
+    if (!data.dishes) return { keywords: ['salmon'] };
+    generated = true;
+    assert.equal(data.dishes[0].isSpecial, true);
+    assert.equal(data.dishes[0].description, salmon.description);
+    assert.match(system, /how its listed ingredients combine in flavour or texture/);
+    assert.match(system, /Keep the supplied dish order/);
+    return { reply: 'BAKED SALMON kết hợp vị béo của cá và bơ với chút chua thơm từ cam, cùng vị ngọt của khoai lang nghiền.' };
+  } } });
+  assert.equal(generated, true);
+  assert.match(result.reply, /chua thơm từ cam/);
+});
