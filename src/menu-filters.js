@@ -35,3 +35,45 @@ export function filterItems(items, preferences) {
   });
 }
 
+
+// Beverage identity comes from its category/recipe, not a fruit-juice ingredient in a cocktail.
+export function beverageProfile(item, category) {
+  const group = normalize(category).replace(/[_-]/g, ' ');
+  const text = normalize(`${item.name} ${item.description}`);
+  const types = [];
+  const mocktail = /\bmocktails?\b/.test(group);
+  const cocktail = /\bcocktails?\b/.test(group);
+  const softDrink = /\b(?:soft drinks?|juices?|smoothies?|beverages?)\b/.test(group);
+  const coffee = /\bcoffee\b/.test(group);
+  const tea = /\btea\b/.test(group);
+  const beer = /\bbeers?\b/.test(group);
+  const wine = /\b(?:wines?|prosecco)\b/.test(group);
+  const spirit = /\bspirits?\b/.test(group);
+  const liquor = /\b(?:vodka|gin|rum|tequila|whisk(?:e)?y|bourbon|brandy|cognac|liqueur|aperol|campari|cointreau|amaretto|baileys|vermouth|schnapps|sake|bacardi|kahlua)\b/.test(text);
+  const alcoholFree = /\b(?:non[ -]?alcoholic|alcohol[ -]?free|zero[ -]?proof)\b|(?:^|\s)0[.,]0\s*%/.test(text);
+  // Explicitly listed liquor vetoes an otherwise non-alcoholic category.
+  const alcoholic = liquor || cocktail || spirit || (!alcoholFree && ((beer || wine) || /\b(?:wine|beer|prosecco|champagne|cider)\b/.test(text)));
+  const nonAlcoholic = !alcoholic && (mocktail || softDrink || coffee || tea || alcoholFree);
+  if (mocktail) types.push('mocktail');
+  if (cocktail) types.push('cocktail');
+  if (softDrink) types.push('soft_drink');
+  if (coffee) types.push('coffee');
+  if (tea || (softDrink && /\btea\b/.test(text))) types.push('tea');
+  if (spirit) types.push('spirit');
+  // Some menus combine beer and wine in one category: distinguish them by the recipe/name.
+  if (beer && (!wine || /\b(?:beer|lager|ale|pilsner|stout|ipa|heineken|tiger|saigon|huda)\b/.test(text))) types.push('beer');
+  if (wine && (!beer || /\b(?:wine|prosecco|merlot|cabernet|chardonnay|sauvignon|shiraz|pinot|montepulciano)\b/.test(text))) types.push('wine');
+  if (nonAlcoholic && !mocktail && !coffee && !tea && softDrink
+    && /\b(?:juice|smoothie)\b/.test(text)
+    && !/\b(?:tea|coffee|milk|cream|yogurt|soda|tonic|ginger ale)\b/.test(text)) types.push('juice');
+  return { types, alcohol: alcoholic ? 'alcoholic' : nonAlcoholic ? 'none' : 'unknown' };
+}
+
+const alcoholFreePhrases = /\b(?:khong\s+(?:co\s+)?con|non[ -]?alcoholic|alcohol[ -]?free|no alcohol|without alcohol|sans alcool|sin alcohol|senza alcol)\b|без\s+алкоголя|безалкоголь|алкогольсіз|спиртсіз|무알(?:코올|콜)|无酒精|無酒精|ノンアルコール|アルコールなし/;
+export const requestsAlcoholFree = text => alcoholFreePhrases.test(normalize(text).normalize('NFC'));
+export const isAlcoholOnlyFollowup = text => [
+  'khong con', 'khong co con', 'do uong khong con', 'non-alcoholic', 'non alcoholic',
+  'alcohol-free', 'alcohol free', 'no alcohol', 'without alcohol', 'sans alcool', 'sin alcohol',
+  'senza alcol', 'без алкоголя', 'безалкогольное', 'алкогольсіз', 'спиртсіз',
+  '무알코올', '무알콜', '无酒精', '無酒精', 'ノンアルコール', 'アルコールなし',
+].includes(normalize(text).normalize('NFC').replace(/[?？!！.,。]/g, '').trim());

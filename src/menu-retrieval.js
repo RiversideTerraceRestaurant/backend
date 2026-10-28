@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { filterItems, normalize } from './menu-filters.js';
+import { filterItems, normalize, beverageProfile } from './menu-filters.js';
 
 const unique = values => [...new Set(values)].sort();
 function queryFor(intent, preferences) {
@@ -9,11 +9,14 @@ function queryFor(intent, preferences) {
     mild: intent.mild || preferences.mild,
     avoid: unique([...intent.avoid, ...preferences.avoid].map(normalize)),
     keywords: unique(intent.keywords.map(normalize)), kind: intent.kind, includeKids: intent.includeKids,
+    drinkType: intent.drinkType || 'any', alcohol: intent.alcohol || 'any',
   };
 }
 function narrows(next, prior) {
   return JSON.stringify(next.keywords) === JSON.stringify(prior.keywords)
     && next.kind === prior.kind && next.includeKids === prior.includeKids
+    && (prior.drinkType === 'any' || next.drinkType === prior.drinkType)
+    && (prior.alcohol === 'any' || next.alcohol === prior.alcohol)
     && prior.diets.every(diet => next.diets.includes(diet))
     && next.maxPrice <= prior.maxPrice && (!prior.mild || next.mild)
     && prior.avoid.every(term => next.avoid.includes(term));
@@ -33,7 +36,8 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
         documents = new Map(items.map(item => {
           const category = names.get(item.category_id) || '';
           return [item.id, {
-            item, text: normalize(`${item.name} ${item.description} ${(item.badges || []).join(' ')}`),
+            item, text: normalize(`${item.name} ${item.description} ${(item.badges || []).join(' ')} ${category}`),
+            beverage: beverageProfile(item, category),
             drink: /drink|cocktail|mocktail|beer|wine|coffee|spirit|beverage|juice|tea\b/.test(category),
             dessert: /dessert|sweet/.test(category), kids: /kids?|children/.test(category),
           }];
@@ -65,11 +69,13 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
         inspected = pool.length;
         ids = pool.filter(doc => {
           if (!query.includeKids && doc.kids) return false;
+          if (query.drinkType !== 'any' && !doc.beverage.types.includes(query.drinkType)) return false;
+          if (doc.drink && query.alcohol !== 'any' && doc.beverage.alcohol !== query.alcohol) return false;
           if (categories.length && query.kind !== 'any') {
             if (query.kind === 'drink' ? !doc.drink : query.kind === 'dessert' ? !doc.dessert : doc.drink || doc.dessert) return false;
           }
           // A prior-item question is resolved by ID, so keywords need not repeat the dish name.
-          if (strategy !== 'previous' && query.keywords.length && !query.keywords.some(word => doc.text.includes(word))) return false;
+          if (strategy !== 'previous' && query.keywords.length && !query.keywords.every(word => doc.text.includes(word))) return false;
           return filterItems(filterItems([doc.item], preferences), intent).length > 0;
         }).map(doc => doc.item.id);
         if (strategy !== 'previous') {

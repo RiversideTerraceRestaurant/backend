@@ -122,3 +122,21 @@ are applied first. The assistant receives each selected dish's actual category
 and Special status, and explains ingredient/flavour combinations in short,
 natural paragraphs using only supplied recipe information. Special status is
 never inferred from a dish's name or assigned to an unrelated category.
+
+## Beverage identity and alcohol filters
+
+Intent extraction separates `drinkType` (juice, mocktail, cocktail, beer, wine,
+coffee, tea, soft_drink, spirit or any) from desired fruit/ingredient keywords,
+and `alcohol` (none, alcoholic or any). Retrieval checks these against actual
+categories and recipe ingredients before selecting cards. Juice ingredients in
+a cocktail or tea-based mocktail do not make that drink a fruit juice. Listed
+liquor overrides a non-alcoholic category, and unknown alcohol status is not
+accepted for alcohol-free requests.
+
+Short alcohol-free follow-ups preserve the previous beverage type, desired
+fruits, price, dietary and avoided-ingredient constraints, and re-query the
+catalog even if the model misclassifies the short message. Beverage and alcohol
+constraints are part of retrieval cache keys and narrowing rules. Desired
+keywords are conjunctive. Drink searches do not broaden missing fruit keywords
+to unrelated alternatives. Four cards is a maximum, never a target: only the
+actual eligible results are shown, including just one or two drinks.
