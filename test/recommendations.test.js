@@ -105,3 +105,50 @@ test('one RTR AI can recommend dishes on home and answer a mixed question with r
     if (topic === 'both') { assert.match(result.reply, /Đà Nẵng/); assert.equal(result.sources[0].title, 'Địa chỉ'); }
   }
 });
+
+test('a corrected topic replaces compact memory without reusing its subjects as menu filters', async () => {
+  let state;
+  const previous = { memory: { summary: 'Guest asked about beef and Verona.', keywords: ['beef', 'Verona'] } };
+  const updated = { summary: 'Guest now wants tofu, not beef.', keywords: ['tofu', 'tofu'] };
+  const ai = { json: async (system, data) => {
+    if (data.dishes) {
+      assert.deepEqual(data.conversationContext.keywords, ['tofu']);
+      return { reply: 'Try the tofu.' };
+    }
+    assert.deepEqual(data.conversationContext, previous.memory);
+    assert.match(system, /latest explicit guest request overrides old context/);
+    return { topic: 'menu', keywords: ['tofu'], memory: updated };
+  } };
+  const result = await recommend({ input: input({ action: 'chat' }), previous, items, ai, onState: value => { state = value; } });
+  assert.deepEqual(result.items.map(item => item.id), ['3']);
+  assert.deepEqual(state.memory.keywords, ['tofu']);
+  assert.equal(result.preferences.memory, undefined);
+});
+
+test('explicitly cleared memory replaces old context in both state and restaurant replies', async () => {
+  let state;
+  const memory = { summary: '', keywords: [] };
+  const result = await recommend({
+    input: input({ action: 'chat' }),
+    previous: { selectedIds: ['1'], memory: { summary: 'Earlier request', keywords: ['Verona'] } },
+    ai: { json: async () => ({ topic: 'restaurant', memory }) },
+    onState: value => { state = value; },
+    restaurant: async context => {
+      assert.deepEqual(context.memory, memory);
+      return { reply: 'What would you like to know?', items: [], mode: 'ai' };
+    },
+  });
+  assert.equal(result.mode, 'ai');
+  assert.deepEqual(state.memory, memory);
+  assert.equal(state.selectedIds, undefined);
+});
+
+test('malformed model memory does not discard a valid intent or replace bounded prior memory', async () => {
+  let state;
+  const previous = { memory: { summary: 'Guest is choosing a dish.', keywords: ['food'] } };
+  const ai = { json: async (_system, data) => data.dishes ? { reply: 'Try this dish.' } : { topic: 'menu', memory: { summary: 'x'.repeat(701), keywords: Array(20).fill('invalid') } } };
+  const result = await recommend({ input: input({ action: 'chat' }), previous, items, ai, onState: value => { state = value; } });
+  assert.equal(result.mode, 'ai');
+  assert.ok(result.items.length > 0);
+  assert.deepEqual(state.memory, previous.memory);
+});

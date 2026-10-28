@@ -154,7 +154,7 @@ export function createApp(config, dependencies = {}) {
         const answer = await recommend({
           input, ai, retriever, previous, onState: next => { state = next; },
           getCatalog: async ({ popular }) => ({ ...await cachedCatalog(), ...(popular ? await countsFor(auth.publicClient) : { counts: [], popularityAvailable: false }) }),
-          restaurant: async () => answerRestaurant({ input, knowledge: await knowledge.read(), ai }),
+          restaurant: async ({ memory } = {}) => answerRestaurant({ input, knowledge: await knowledge.read(), ai, conversationContext: memory }),
         });
         // Missing, expired or mismatched context starts a fresh isolated conversation.
         const conversationId = conversations.save(previous ? input.conversationId : undefined, input, answer, state || {});

@@ -98,7 +98,7 @@ const precedingTurn = messages => {
 };
 
 // Opaque IDs isolate tabs/guests; bounded TTL storage never persists chat history.
-export function createConversationCache({ ttl = 15 * 60_000, maxEntries = 500, now = Date.now } = {}) {
+export function createConversationCache({ ttl = 30 * 60_000, maxEntries = 500, now = Date.now } = {}) {
   const entries = new Map();
   return {
     read(id, messages) {

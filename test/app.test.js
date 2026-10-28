@@ -241,3 +241,47 @@ test('a write during catalog refresh cannot restore the stale snapshot', async (
   assert.equal(result.body.data[0].price, 300000);
   assert.equal((await request(handler, '/api/menu')).body.data[0].price, 300000);
 });
+
+test('compact guest memory survives truncated history and topic switches without leaking to a new chat', async () => {
+  const memory = { summary: 'Guest is vegetarian and interested in the Verona room.', keywords: ['vegetarian', 'Verona'] };
+  const contexts = [];
+  const answers = [];
+  let turn = 0;
+  const { handler } = app({
+    knowledge: { read: async () => ({ content: '## Rooms\nVerona has guitars.' }) },
+    ai: { json: async (_system, data) => {
+      if (data.knowledgeSections || data.dishes) {
+        answers.push(data.conversationContext);
+        return data.dishes ? { reply: 'Try the salad.' } : { reply: 'Verona has guitars.', sourceIds: ['section-1'] };
+      }
+      contexts.push({ memory: data.conversationContext, messages: data.conversation });
+      const current = turn++;
+      return { topic: current === 1 ? 'menu' : 'restaurant', ...(current === 0 ? { memory } : {}) };
+    } },
+  });
+  let history = [];
+  let conversationId;
+  for (let index = 0; index < 7; index++) {
+    history.push({ role: 'user', content: index === 0 ? 'I am vegetarian. Tell me about Verona.' : index === 1 ? 'Suggest a dish.' : `Follow-up ${index}: what about that room?` });
+    const result = await request(handler, '/api/chat', { method: 'POST', body: { conversationId, messages: history.slice(-11) } });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.mode, 'ai');
+    if (conversationId) assert.equal(result.body.conversationId, conversationId);
+    conversationId = result.body.conversationId;
+    assert.equal(result.body.memory, undefined);
+    assert.equal(result.body.preferences?.memory, undefined);
+    history.push({ role: 'assistant', content: result.body.reply });
+  }
+  assert.equal(contexts[0].memory, null);
+  assert.ok(contexts.slice(1).every(context => JSON.stringify(context.memory) === JSON.stringify(memory)));
+  assert.ok(!contexts.at(-1).messages.some(message => message.content.includes('I am vegetarian')));
+  assert.ok(answers.every(context => JSON.stringify(context) === JSON.stringify(memory)));
+  // Even matching visible history cannot recover another chat's memory without its ID.
+  const fresh = await request(handler, '/api/chat', { method: 'POST', body: { messages: [...history.slice(-10), { role: 'user', content: 'What about that room?' }] } });
+  assert.notEqual(fresh.body.conversationId, conversationId);
+  assert.equal(contexts.at(-1).memory, null);
+  // A supplied ID with a different preceding turn also starts a fresh conversation.
+  const mismatch = await request(handler, '/api/chat', { method: 'POST', body: { conversationId, messages: [{ role: 'user', content: 'New guest' }] } });
+  assert.notEqual(mismatch.body.conversationId, conversationId);
+  assert.equal(contexts.at(-1).memory, null);
+});

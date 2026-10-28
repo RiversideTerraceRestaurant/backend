@@ -67,3 +67,20 @@ attempts to restore the previous commit, dependencies and process. Local
 changes to tracked server files stop deployment. `.env` and persistent files
 under `/home/ubuntu/app-data` are preserved. Code runs from a detached commit;
 use `git log -1` to inspect the deployed revision.
+
+## Chat context
+
+Each opaque conversation ID holds a bounded compact memory (summary up to 700
+characters and up to 12 keywords), alongside the menu retrieval state. The
+existing intent extraction updates it without another AI request. Intent
+classification and menu/restaurant replies receive this context even after
+older turns fall outside the browser's recent-history window. Memory keywords
+are separate from dish-search keywords. Current guest corrections take priority;
+restaurant/menu facts still come from current knowledge and catalog data.
+
+Memory is server-side and is not returned in API responses. It requires the
+conversation ID and a matching preceding turn; missing/mismatched IDs start a
+fresh chat. It expires after 30 minutes of inactivity, is bounded to 500 chats,
+and is lost when the backend restarts. Starting a new chat in the widget drops
+the ID. Reloading the page also starts a new chat; cross-visit memory is not
+stored. Guest-requested context clearing also removes previous menu references.
