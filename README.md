@@ -71,7 +71,9 @@ use `git log -1` to inspect the deployed revision.
 ## Chat context
 
 Each opaque conversation ID holds a bounded compact memory (summary up to 700
-characters and up to 12 keywords), alongside the menu retrieval state. The
+characters and up to 12 keywords), plus up to 20 guest-question excerpts of
+240 characters each, alongside the menu retrieval state. Question excerpts
+provide anchors when the model summary omits an older subject. The
 existing intent extraction updates it without another AI request. Intent
 classification and menu/restaurant replies receive this context even after
 older turns fall outside the browser's recent-history window. Memory keywords

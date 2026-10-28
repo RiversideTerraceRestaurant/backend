@@ -131,7 +131,7 @@ test('explicitly cleared memory replaces old context in both state and restauran
   const result = await recommend({
     input: input({ action: 'chat' }),
     previous: { selectedIds: ['1'], memory: { summary: 'Earlier request', keywords: ['Verona'] } },
-    ai: { json: async () => ({ topic: 'restaurant', memory }) },
+    ai: { json: async () => ({ topic: 'restaurant', memory, forgetContext: true }) },
     onState: value => { state = value; },
     restaurant: async context => {
       assert.deepEqual(context.memory, memory);
@@ -140,6 +140,7 @@ test('explicitly cleared memory replaces old context in both state and restauran
   });
   assert.equal(result.mode, 'ai');
   assert.deepEqual(state.memory, memory);
+  assert.deepEqual(state.questions, []);
   assert.equal(state.selectedIds, undefined);
 });
 
@@ -151,4 +152,20 @@ test('malformed model memory does not discard a valid intent or replace bounded 
   assert.equal(result.mode, 'ai');
   assert.ok(result.items.length > 0);
   assert.deepEqual(state.memory, previous.memory);
+});
+
+
+test('an empty model summary cannot erase earlier guest questions without an explicit forget signal', async () => {
+  let state;
+  await recommend({
+    input: input({ action: 'chat' }),
+    previous: { questions: ['Remember Verona.'], memory: { summary: 'Verona', keywords: ['Verona'] } },
+    ai: { json: async () => ({ topic: 'restaurant', memory: { summary: '', keywords: [] } }) },
+    onState: value => { state = value; },
+    restaurant: async ({ questions }) => {
+      assert.equal(questions[0], 'Remember Verona.');
+      return { reply: 'Restaurant address.', mode: 'ai', items: [] };
+    },
+  });
+  assert.equal(state.questions[0], 'Remember Verona.');
 });

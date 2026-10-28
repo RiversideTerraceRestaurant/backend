@@ -254,7 +254,7 @@ test('compact guest memory survives truncated history and topic switches without
         answers.push(data.conversationContext);
         return data.dishes ? { reply: 'Try the salad.' } : { reply: 'Verona has guitars.', sourceIds: ['section-1'] };
       }
-      contexts.push({ memory: data.conversationContext, messages: data.conversation });
+      contexts.push({ memory: data.conversationContext, messages: data.conversation, questions: data.previousQuestions });
       const current = turn++;
       return { topic: current === 1 ? 'menu' : 'restaurant', ...(current === 0 ? { memory } : {}) };
     } },
@@ -275,13 +275,16 @@ test('compact guest memory survives truncated history and topic switches without
   assert.equal(contexts[0].memory, null);
   assert.ok(contexts.slice(1).every(context => JSON.stringify(context.memory) === JSON.stringify(memory)));
   assert.ok(!contexts.at(-1).messages.some(message => message.content.includes('I am vegetarian')));
+  assert.ok(contexts.at(-1).questions.some(question => question.includes('I am vegetarian')));
   assert.ok(answers.every(context => JSON.stringify(context) === JSON.stringify(memory)));
   // Even matching visible history cannot recover another chat's memory without its ID.
   const fresh = await request(handler, '/api/chat', { method: 'POST', body: { messages: [...history.slice(-10), { role: 'user', content: 'What about that room?' }] } });
   assert.notEqual(fresh.body.conversationId, conversationId);
   assert.equal(contexts.at(-1).memory, null);
+  assert.deepEqual(contexts.at(-1).questions, []);
   // A supplied ID with a different preceding turn also starts a fresh conversation.
   const mismatch = await request(handler, '/api/chat', { method: 'POST', body: { conversationId, messages: [{ role: 'user', content: 'New guest' }] } });
   assert.notEqual(mismatch.body.conversationId, conversationId);
   assert.equal(contexts.at(-1).memory, null);
+  assert.deepEqual(contexts.at(-1).questions, []);
 });
