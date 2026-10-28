@@ -86,3 +86,14 @@ fresh chat. It expires after 30 minutes of inactivity, is bounded to 500 chats,
 and is lost when the backend restarts. Starting a new chat in the widget drops
 the ID. Reloading the page also starts a new chat; cross-visit memory is not
 stored. Guest-requested context clearing also removes previous menu references.
+
+## Chat language detection
+
+Free-text chat detects the language of the latest guest message during the
+existing intent request. Supported codes match the UI selector: `en`, `vi`,
+`ko`, `ja`, `cn`, `ru`, `kz`, `es`, `fr`, `it`. The detected language is used
+for the current answer and returned as `language` in the chat response. The
+widget updates the shared language context, including the selector and page
+copy. A manual selection made during an in-flight request takes precedence.
+Unsupported or ambiguous input retains the current language. No extra AI
+request is added, and changing language does not reset the conversation.

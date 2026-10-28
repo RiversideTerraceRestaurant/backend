@@ -19,11 +19,12 @@ export const preferencesSchema = z.object({
   maxPrice: z.number().finite().min(0).max(100000000).nullable().default(null),
   mild: z.boolean().default(false), avoid: z.array(z.string().trim().min(1).max(80)).max(10).default([]),
 });
+export const languageSchema = z.enum(['en', 'vi', 'ko', 'ja', 'cn', 'ru', 'kz', 'es', 'fr', 'it']);
 export const chatSchema = z.object({
   conversationId: z.string().uuid().optional(),
   context: z.enum(['home', 'menu']).default('menu'),
   action: z.enum(['chat', 'suggest', 'popular', 'vegetarian', 'mild']).default('chat'),
-  language: z.enum(['en', 'vi', 'ko', 'ja', 'cn', 'ru', 'kz', 'es', 'fr', 'it']).default('en'),
+  language: languageSchema.default('en'),
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().trim().min(1).max(1000) })).min(1).max(12),
   preferences: preferencesSchema.default({}),
 }).refine(value => value.messages.at(-1)?.role === 'user', 'The last message must be from the guest.');

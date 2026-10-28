@@ -169,3 +169,57 @@ test('an empty model summary cannot erase earlier guest questions without an exp
   });
   assert.equal(state.questions[0], 'Remember Verona.');
 });
+
+test('unsupported, ambiguous or missing detection preserves the selected language', async () => {
+  for (const detectedLanguage of ['de', 'ar', 'invalid', null, undefined]) {
+    const result = await recommend({
+      input: input({ language: 'vi', action: 'chat' }),
+      ai: { json: async () => ({ topic: 'restaurant', detectedLanguage }) },
+      restaurant: async ({ language }) => {
+        assert.equal(language, 'vi');
+        return { reply: 'Thông tin nhà hàng.', mode: 'ai', items: [] };
+      },
+    });
+    assert.equal(result.language, 'vi');
+    assert.equal(result.mode, 'ai');
+  }
+});
+
+test('detected language controls menu generation and localized fallback text', async () => {
+  let calls = 0;
+  const result = await recommend({
+    input: input({ language: 'en', action: 'chat' }), items,
+    ai: { json: async (system, data) => {
+      if (!data.dishes) {
+        assert.match(system, /LATEST guest message/);
+        return { topic: 'menu', detectedLanguage: 'vi' };
+      }
+      calls++;
+      assert.equal(data.language, 'vi');
+      throw new Error('Provider unavailable during answer generation');
+    } },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.language, 'vi');
+  assert.equal(result.mode, 'filters');
+  assert.match(result.reply, /Bạn thử những món này/);
+  assert.equal(result.preferences.detectedLanguage, undefined);
+});
+
+test('mixed restaurant and menu answers use one detected language', async () => {
+  const result = await recommend({
+    input: input({ language: 'en', action: 'chat' }), items,
+    ai: { json: async (_system, data) => {
+      if (!data.dishes) return { topic: 'both', detectedLanguage: 'fr' };
+      assert.equal(data.language, 'fr');
+      return { reply: 'Voici quelques plats.' };
+    } },
+    restaurant: async ({ language }) => {
+      assert.equal(language, 'fr');
+      return { reply: 'Le restaurant est à Da Nang.', mode: 'ai', sources: [] };
+    },
+  });
+  assert.equal(result.language, 'fr');
+  assert.match(result.reply, /Da Nang/);
+  assert.match(result.reply, /quelques plats/);
+});

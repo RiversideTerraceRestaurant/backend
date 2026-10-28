@@ -288,3 +288,44 @@ test('compact guest memory survives truncated history and topic switches without
   assert.equal(contexts.at(-1).memory, null);
   assert.deepEqual(contexts.at(-1).questions, []);
 });
+
+test('chat returns each supported detected language and uses it for the restaurant reply', async () => {
+  const supported = { en: 'English', vi: 'Vietnamese', ko: 'Korean', ja: 'Japanese', cn: 'Simplified Chinese', ru: 'Russian', kz: 'Kazakh', es: 'Spanish', fr: 'French', it: 'Italian' };
+  for (const [language, name] of Object.entries(supported)) {
+    let answerSystem;
+    const { handler } = app({
+      knowledge: { read: async () => ({ content: '## Address\nDa Nang, Vietnam.' }) },
+      ai: { json: async (system, data) => {
+        if (!data.knowledgeSections) return { topic: 'restaurant', detectedLanguage: language };
+        answerSystem = system;
+        return { reply: 'Restaurant information.', sourceIds: ['section-1'] };
+      } },
+    });
+    const result = await request(handler, '/api/chat', { method: 'POST', body: { language: 'en', messages: [{ role: 'user', content: 'A substantive question in the detected language.' }] } });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.language, language);
+    assert.ok(answerSystem.includes(`Answer in ${name}.`));
+    assert.equal(result.body.preferences?.detectedLanguage, undefined);
+  }
+});
+
+test('changing the chat language keeps the same conversation and earlier context', async () => {
+  const detected = ['vi', 'ko'];
+  let calls = 0;
+  const memories = [];
+  const { handler } = app({
+    knowledge: { read: async () => ({ content: '## Rooms\nVerona has guitars.' }) },
+    ai: { json: async (_system, data) => {
+      if (data.knowledgeSections) return { reply: 'Room information.', sourceIds: ['section-1'] };
+      memories.push(data.previousQuestions);
+      return { topic: 'restaurant', detectedLanguage: detected[calls++] };
+    } },
+  });
+  const firstQuestion = { role: 'user', content: 'Cho mình hỏi về phòng Verona.' };
+  const first = await request(handler, '/api/chat', { method: 'POST', body: { language: 'en', messages: [firstQuestion] } });
+  const second = await request(handler, '/api/chat', { method: 'POST', body: { language: 'vi', conversationId: first.body.conversationId, messages: [firstQuestion, { role: 'assistant', content: first.body.reply }, { role: 'user', content: '예약은 어떻게 하나요?' }] } });
+  assert.equal(first.body.language, 'vi');
+  assert.equal(second.body.language, 'ko');
+  assert.equal(second.body.conversationId, first.body.conversationId);
+  assert.deepEqual(memories[1], [firstQuestion.content]);
+});
