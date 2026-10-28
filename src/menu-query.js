@@ -15,7 +15,8 @@ const fingerprint = text => normalize(text).normalize('NFC');
 
 // Verify VND amounts from quoted numeric evidence, rather than trusting an inferred cap.
 function quotedBudget(term) {
-  const expected = Number(term.value);
+  const canonicalAmount = fingerprint(term.value).match(/^(\d+(?:[.,]\d+)*)\s*(?:vnd|dong|₫)?$/);
+  const expected = canonicalAmount ? Number(/^\d{1,3}(?:[.,]\d{3})+$/.test(canonicalAmount[1]) ? canonicalAmount[1].replace(/[.,]/g, '') : canonicalAmount[1].replace(',', '.')) : NaN;
   if (!Number.isFinite(expected) || expected < 0 || expected > 100000000) return null;
   const quote = fingerprint(term.source);
   if (/[$€£]|usd|eur/.test(quote)) return null;

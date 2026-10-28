@@ -142,7 +142,7 @@ test('an unrequested model-inferred budget is removed; a manually selected cap i
 });
 
 test('a spoken price cap requires matching numeric evidence and is not inferred from taste words', async () => {
-  for (const [content, source, value] of [['steak dưới 600k', '600k', '600000'], ['steak dưới 600.000đ', '600.000đ', '600000'], ['steak dưới 0,6 triệu', '0,6 triệu', '600000']]) {
+  for (const [content, source, value] of [['steak dưới 600k', '600k', '600000'], ['steak dưới 600.000đ', '600.000đ', '600000'], ['steak dưới 0,6 triệu', '0,6 triệu', '600000'], ['steak dưới 600k thôi', 'dưới 600k thôi', '600000 VND'], ['steak dưới 600k', '600k', '600.000 ₫']]) {
     const result = await recommend({ input: input(content), items: steaks, categories: steakCategories,
       ai: model({ ...base, kind: 'food', queryMode: 'new_search', searchTerms: [{ type: 'dish_type', value: 'steak', source: 'steak' }, { type: 'budget', value, source }] }),
     });
