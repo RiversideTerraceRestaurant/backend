@@ -140,3 +140,10 @@ constraints are part of retrieval cache keys and narrowing rules. Desired
 keywords are conjunctive. Drink searches do not broaden missing fruit keywords
 to unrelated alternatives. Four cards is a maximum, never a target: only the
 actual eligible results are shown, including just one or two drinks.
+
+Flavour generation also receives recipe-specific ingredient characteristics and
+terminology guidance; it must not invent heat, crispness, melon varieties or
+cooking methods. If generation is unavailable, the response shows actual recipe
+descriptions alongside the eligible cards. A precisely recognized alcohol-free
+follow-up to an existing resolved drink request can still be safely retrieved
+when intent extraction is unavailable, without guessing new free-text requests.

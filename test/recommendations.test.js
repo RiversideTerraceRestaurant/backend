@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { filterItems, priceWithVAT, recommend } from '../src/recommendations.js';
 import { chatSchema } from '../src/validation.js';
+import { menuFlavourNotes } from '../src/menu-filters.js';
 
 const items = [
   { id: '1', name: 'Garden salad', description: 'Tomato, lettuce and olive oil', price: 90000, vat: 10, badges: ['vegan', 'vegetarian'] },
@@ -346,4 +347,13 @@ test('reply generation receives Special status and is instructed to explain flav
   } } });
   assert.equal(generated, true);
   assert.match(result.reply, /chua thơm từ cam/);
+});
+
+
+test('flavour guidance is specific to each actual recipe and does not infer heat or melon varieties', () => {
+  const notes = menuFlavourNotes({ description: 'Salmon, cream & cherry tomatoes' });
+  assert.ok(notes.some(note => note.includes('mild acidity')));
+  assert.ok(!notes.some(note => /Garlic|Capers|Orange/.test(note)));
+  assert.ok(menuFlavourNotes({ description: 'Spaghetti, blackened salmon, garlic, parmesan' }).some(note => note.includes('no crispness')));
+  assert.ok(menuFlavourNotes({ description: 'Lychee, pineapple & melon juice' }).some(note => note.includes('do not say watermelon')));
 });

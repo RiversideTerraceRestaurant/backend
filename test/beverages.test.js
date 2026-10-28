@@ -119,3 +119,16 @@ test('alcohol-free beer can be identified from an explicit label, while alcohol 
   assert.equal(beverageProfile(item('zero', 'Beer 0.0%', 'Alcohol-free lager', 'beers', 50000), 'Beers').alcohol, 'none');
   assert.equal(beverageProfile(item('wrong', 'Alcohol-free mix', 'Orange juice and vodka', 'mocktails', 50000), 'Mocktails').alcohol, 'alcoholic');
 });
+
+
+test('a known alcohol-free follow-up remains safely filtered when intent extraction is unavailable', async () => {
+  const previous = { intent: { ...intent, drinkType: 'juice' } };
+  const result = await recommend({
+    input: input({ context: 'home', messages: [{ role: 'user', content: 'không cồn?' }] }), ...catalog, previous,
+    ai: { json: async () => { throw new Error('Provider unavailable'); } },
+    restaurant: async () => { throw new Error('A resolved drink follow-up must not fall back to restaurant knowledge'); },
+  });
+  assert.equal(result.mode, 'filters');
+  assert.deepEqual(result.items.map(item => item.id), ['orange', 'tropical']);
+  assert.match(result.reply, /Lychee, pineapple & melon juice/);
+});

@@ -77,3 +77,26 @@ export const isAlcoholOnlyFollowup = text => [
   'senza alcol', 'без алкоголя', 'безалкогольное', 'алкогольсіз', 'спиртсіз',
   '무알코올', '무알콜', '无酒精', '無酒精', 'ノンアルコール', 'アルコールなし',
 ].includes(normalize(text).normalize('NFC').replace(/[?？!！.,。]/g, '').trim());
+
+// Ground flavour prose in known ingredient characteristics, without inventing recipe details.
+export function menuFlavourNotes(item) {
+  const text = normalize(item.description);
+  return [
+    [/\bsmoked salmon\b/, 'Smoked salmon: rich, smoky flavour.'],
+    [/\bsalmon\b/, 'Salmon: richness; no doneness or texture is confirmed.'],
+    [/\b(?:cream|cream cheese|mozzarella)\b/, 'Cream or cheese: creamy richness; do not call it sweet or crisp.'],
+    [/\bparmesan\b/, 'Parmesan: savoury, salty depth; no crispness is stated.'],
+    [/\btomato(?:es)?\b/, 'Tomato: mild acidity balancing rich ingredients.'],
+    [/\bcapers?\b/, 'Capers: salty, tangy contrast.'],
+    [/\bgarlic\b/, 'Garlic: aromatic, savoury character.'],
+    [/\borange\b/, 'Orange: citrus aroma and sweet-tart character.'],
+    [/\bbutter\b/, 'Butter: richness.'],
+    [/\bsweet potatoes\b/, 'Sweet potatoes: mild sweetness.'],
+    [/\bpesto\b/, 'Pesto: herbal aroma; do not assume extra ingredients.'],
+    [/\b(?:rocket|rockets|arugula|mint|dill)|thi la/, 'Listed herbs: herbal aroma; do not infer chili heat.'],
+    [/\blychee(?:s)?\b/, 'Lychee: sweetness and floral aroma.'],
+    [/\bpineapple\b/, 'Pineapple: sweet-tart tropical flavour.'],
+    [/\bmelon\b/, 'Melon: mild sweetness; its variety is unspecified, so do not say watermelon.'],
+    [/\b(?:crispy|crunchy|toasted bread)\b/, 'The stated crispy/crunchy/toasted-bread component may add a crisp contrast.'],
+  ].filter(([pattern]) => pattern.test(text)).map(([, note]) => note);
+}
