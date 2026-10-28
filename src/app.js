@@ -149,16 +149,18 @@ export function createApp(config, dependencies = {}) {
         limit(`chat-hour:${ip}`, 40, 3600000);
         const input = chatSchema.parse(await readBody(req));
         if (input.action === 'chat') useAIQuota();
+        const requestId = randomUUID();
         const previous = conversations.read(input.conversationId, input.messages);
         let state = previous;
         const answer = await recommend({
           input, ai, retriever, previous, onState: next => { state = next; },
+          onDiagnostic: event => (dependencies.onChatDiagnostic || (entry => console.warn(JSON.stringify(entry))))({ requestId, ...event }),
           getCatalog: async ({ popular }) => ({ ...await cachedCatalog(), ...(popular ? await countsFor(auth.publicClient) : { counts: [], popularityAvailable: false }) }),
           restaurant: async ({ memory, questions, language = input.language } = {}) => answerRestaurant({ input: { ...input, language }, knowledge: await knowledge.read(), ai, conversationContext: memory, previousQuestions: questions }),
         });
         // Missing, expired or mismatched context starts a fresh isolated conversation.
         const conversationId = conversations.save(previous ? input.conversationId : undefined, input, answer, state || {});
-        return send(res, { ...answer, conversationId });
+        return send(res, { ...answer, conversationId, requestId });
       }
       if (method === 'GET' && path === '/api/auth/session') {
         const session = await auth.authenticate(req, res, false);

@@ -158,7 +158,39 @@ Explicit category requests such as “cocktail nào ngon nhất” constrain the
 server-side search even if the intent model returns generic drinks or stale
 previous references. Simple unqualified requests can still use category-bound
 fallback retrieval during AI outages; requests with unresolved ingredient,
-price or dietary qualifiers still require intent extraction. Previous dietary
-and price constraints remain in that fallback. Alcohol-free cocktails map to
+price or dietary qualifiers still require intent extraction. Only verified session dietary restrictions carry into a fresh category request;
+request-scoped restrictions and old spoken budgets do not. Alcohol-free cocktails map to
 mocktails. “Best” category requests show at most a lead option and one alternative,
 with recipe-based explanations and no invented popularity or objective ranking.
+
+
+## Evidence-based menu queries and price policy
+
+Intent extraction supplies a typed `searchTerms` array with guest quotes and a
+`queryMode` (`new_search`, `refine`, `detail`). The server verifies those quotes
+against guest messages, separates subjects, ingredients, dietary constraints and
+preferences, and compiles one canonical query before retrieval. Broad subjects
+search the catalog, rather than only the last displayed cards. A partial family
+name such as steak cannot silently resolve to the previously displayed Steak
+Salad. Only grounded product-detail references restrict retrieval to prior cards.
+Invalid required evidence produces an unavailable response, not a false claim
+that the restaurant has no matching dishes. Zero matches are checked against the
+full catalog before that conclusion; inherited beverage subtypes can be broadened
+with an explicit alternatives notice while mandatory constraints remain intact.
+
+Natural-language price caps require a matching numeric amount in a quoted guest
+message; taste words and model guesses cannot create one. The UI budget remains
+binding while selected. A verified spoken cap survives genuine refinements but
+is not carried into a fresh subject; a cleared UI cap is not resurrected from
+context. Dietary restrictions require evidence too: ordinary meal choices reset
+on a new subject, while explicitly stated session restrictions remain in effect.
+
+Eligible Special dishes rank first. Relevant dishes otherwise prefer higher
+VAT-inclusive prices, without category quotas. An explicit cheap preference
+reverses price order without inventing a numeric cap. Popularity is used only
+when requested. Four cards is a maximum, never a quota.
+
+Chat responses include `appliedFilters` for visible budget/diet/mildness/avoidance/
+alcohol chips and a `requestId`. Invalid-query, verified-empty and inherited-type
+fallback diagnostics contain filter metadata and rejection counts, not guest
+messages or chat history.

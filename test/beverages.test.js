@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { beverageProfile, requestsAlcoholFree, isAlcoholOnlyFollowup, explicitBeverageRequest } from '../src/menu-filters.js';
 import { createMenuRetriever } from '../src/menu-retrieval.js';
-import { recommend } from '../src/recommendations.js';
+import { recommend as runRecommend } from '../src/recommendations.js';
 import { chatSchema } from '../src/validation.js';
+import { withQueryContract } from './helpers/intent-fixture.js';
+const recommend = options => runRecommend({ ...options, ai: withQueryContract(options.ai) });
 
 const categories = ['soft_drinks', 'mocktails', 'cocktails', 'coffee', 'unknown_drinks'].map(id => ({ id, name: id, display_name: id }));
 const item = (id, name, description, category_id, price) => ({ id, name, description, category_id, price, vat: 0, badges: [] });
@@ -63,17 +65,17 @@ test('previous-item references cannot bypass the new non-alcoholic constraint', 
 test('a juice request returns exactly the two actual juices, without padding with mocktails or cocktails', async () => {
   const result = await recommend({ input: input(), ...catalog, ai: { json: async (_system, data) => {
     if (!data.dishes) return { topic: 'menu', kind: 'drink', keywords: ['juice'] };
-    assert.deepEqual(data.dishes.map(item => item.name), ['FRESH ORANGE JUICE', 'TROPICAL SMOOTH']);
+    assert.deepEqual(data.dishes.map(item => item.name), ['TROPICAL SMOOTH', 'FRESH ORANGE JUICE']);
     assert.ok(data.dishes.every(item => item.beverage.alcohol === 'none'));
     return { reply: 'Bạn thử nước cam hoặc TROPICAL SMOOTH với vải, dứa và dưa nhé.' };
   } } });
-  assert.deepEqual(result.items.map(item => item.id), ['orange', 'tropical']);
+  assert.deepEqual(result.items.map(item => item.id), ['tropical', 'orange']);
   assert.equal(result.alternatives, false);
 });
 
 test('a bare non-alcoholic follow-up retains juice identity and earlier budget even if the model forgets', async () => {
   let state;
-  const previous = { intent: { ...intent, drinkType: 'juice', maxPrice: 60000 }, selectedIds: ['orange', 'tropical', 'rose', 'sandy'] };
+  const previous = { intent: { ...intent, drinkType: 'juice', maxPrice: 60000, budgetExplicit: true, budgetOrigin: 'spoken' }, selectedIds: ['orange', 'tropical', 'rose', 'sandy'] };
   const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'không cồn?' }] }), ...catalog, previous,
     onState: value => { state = value; },
     ai: { json: async (_system, data) => data.dishes ? { reply: 'Nước cam là lựa chọn không cồn.' } : { topic: 'restaurant', kind: 'food', scope: 'previous', referenceIds: ['sandy'], keywords: [] } },
@@ -129,7 +131,7 @@ test('a known alcohol-free follow-up remains safely filtered when intent extract
     restaurant: async () => { throw new Error('A resolved drink follow-up must not fall back to restaurant knowledge'); },
   });
   assert.equal(result.mode, 'filters');
-  assert.deepEqual(result.items.map(item => item.id), ['orange', 'tropical']);
+  assert.deepEqual(result.items.map(item => item.id), ['tropical', 'orange']);
   assert.match(result.reply, /Lychee, pineapple & melon juice/);
 });
 
@@ -193,12 +195,12 @@ test('best cocktail suggestions are limited to a lead choice and one alternative
 });
 
 
-test('category-bound fallback retains previous price limits during provider outages', async () => {
+test('a new category search does not inherit an old automatic price cap during provider outages', async () => {
   const previous = { intent: { ...intent, drinkType: 'juice', maxPrice: 100000 } };
   const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), ...catalog, previous,
     ai: { json: async () => { throw new Error('429'); } },
   });
-  assert.deepEqual(result.items, []); // The only cocktail is above the retained 100k limit.
-  assert.equal(result.preferences.maxPrice, 100000);
+  assert.deepEqual(result.items.map(item => item.id), ['sandy']);
+  assert.equal(result.preferences.maxPrice, null);
   assert.equal(result.preferences.drinkType, 'cocktail');
 });

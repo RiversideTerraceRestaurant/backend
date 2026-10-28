@@ -28,7 +28,7 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
   let documents = new Map();
   let queries = new Map();
   return {
-    retrieve({ items, categories, catalogVersion, intent, preferences, previous }) {
+    retrieve({ items, categories, catalogVersion, intent, preferences, previous, forceCatalog = false }) {
       const nextVersion = catalogVersion || createHash('sha256').update(JSON.stringify([items, categories])).digest('hex');
       if (version !== nextVersion) {
         version = nextVersion;
@@ -36,7 +36,7 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
         documents = new Map(items.map(item => {
           const category = names.get(item.category_id) || '';
           return [item.id, {
-            item, text: normalize(`${item.name} ${item.description} ${(item.badges || []).join(' ')} ${category}`),
+            item, text: normalize(`${item.name} ${item.description} ${(item.badges || []).join(' ')} ${Object.entries(item).filter(([key]) => key.startsWith('description_')).map(([, value]) => value || '').join(' ')} ${category}`),
             beverage: beverageProfile(item, category),
             drink: /drink|cocktail|mocktail|beer|wine|coffee|spirit|beverage|juice|tea\b/.test(category),
             dessert: /dessert|sweet/.test(category), kids: /kids?|children/.test(category),
@@ -51,32 +51,34 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
       let inspected = 0;
       const references = intent.referenceIds || [];
       const search = previous?.exhaustive ? previous : previous?.search;
-      if (intent.scope === 'previous' && previous?.selectedIds?.length
+      if (!forceCatalog && intent.scope === 'previous' && previous?.selectedIds?.length
         && references.every(id => previous.selectedIds.includes(id))) {
         // An empty reference list means all dishes just shown (e.g. a comparison).
         ids = references.length ? references : previous.selectedIds;
         strategy = 'previous';
-      } else if (queries.has(key)) {
+      } else if (!forceCatalog && queries.has(key)) {
         ids = queries.get(key);
         queries.delete(key); queries.set(key, ids);
         strategy = 'cache';
-      } else if (search?.catalogVersion === version && narrows(query, search.query)) {
+      } else if (!forceCatalog && search?.catalogVersion === version && narrows(query, search.query)) {
         ids = search.candidateIds;
         strategy = 'narrowed';
       }
+      const rejected = { kids: 0, beverageType: 0, alcohol: 0, kind: 0, keywords: 0, preferences: 0 };
+      const reject = reason => { rejected[reason]++; return false; };
       if (strategy !== 'cache') {
         const pool = ids ? ids.map(id => documents.get(id)).filter(Boolean) : [...documents.values()];
         inspected = pool.length;
         ids = pool.filter(doc => {
-          if (!query.includeKids && doc.kids) return false;
-          if (query.drinkType !== 'any' && !doc.beverage.types.includes(query.drinkType)) return false;
-          if (doc.drink && query.alcohol !== 'any' && doc.beverage.alcohol !== query.alcohol) return false;
+          if (!query.includeKids && doc.kids) return reject('kids');
+          if (query.drinkType !== 'any' && !doc.beverage.types.includes(query.drinkType)) return reject('beverageType');
+          if (doc.drink && query.alcohol !== 'any' && doc.beverage.alcohol !== query.alcohol) return reject('alcohol');
           if (categories.length && query.kind !== 'any') {
-            if (query.kind === 'drink' ? !doc.drink : query.kind === 'dessert' ? !doc.dessert : doc.drink || doc.dessert) return false;
+            if (query.kind === 'drink' ? !doc.drink : query.kind === 'dessert' ? !doc.dessert : doc.drink || doc.dessert) return reject('kind');
           }
           // A prior-item question is resolved by ID, so keywords need not repeat the dish name.
-          if (strategy !== 'previous' && query.keywords.length && !query.keywords.every(word => doc.text.includes(word))) return false;
-          return filterItems(filterItems([doc.item], preferences), intent).length > 0;
+          if (strategy !== 'previous' && query.keywords.length && !query.keywords.every(word => doc.text.includes(word))) return reject('keywords');
+          return filterItems(filterItems([doc.item], preferences), intent).length > 0 || reject('preferences');
         }).map(doc => doc.item.id);
         if (strategy !== 'previous') {
           queries.set(key, ids);
@@ -85,7 +87,7 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
       }
       return {
         items: ids.map(id => documents.get(id).item),
-        retrieval: { strategy, inspected, matched: ids.length },
+        retrieval: { strategy, inspected, matched: ids.length, rejected, verifiedCatalog: forceCatalog },
         state: {
           catalogVersion: version, query, candidateIds: ids, intent, exhaustive: strategy !== 'previous',
           // Keep the last full search across detail questions without nesting conversation states.

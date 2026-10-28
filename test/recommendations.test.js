@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterItems, priceWithVAT, recommend } from '../src/recommendations.js';
+import { filterItems, priceWithVAT, recommend as runRecommend } from '../src/recommendations.js';
 import { chatSchema } from '../src/validation.js';
+import { withQueryContract } from './helpers/intent-fixture.js';
+const recommend = options => runRecommend({ ...options, ai: withQueryContract(options.ai) });
 import { menuFlavourNotes, menuFlavourSummary } from '../src/menu-filters.js';
 
 const items = [
@@ -66,7 +68,7 @@ test('popularity uses actual view counts and discloses absent tracking data', as
   assert.match(emptyCounts.reply, /Chưa đủ dữ liệu/);
 });
 
-test('default recommendations prioritize food and diversify categories instead of picking cheap drinks', async () => {
+test('default recommendations prioritize higher-priced eligible food without category quotas', async () => {
   const catalog = [
     { ...items[0], category_id: 'starters' },
     { ...items[1], category_id: 'mains' },
@@ -77,7 +79,8 @@ test('default recommendations prioritize food and diversify categories instead o
   const categories = ['starters', 'mains', 'pasta', 'drinks'].map(id => ({ id, name: id, display_name: id }));
   const result = await recommend({ input: input(), items: catalog, categories, ai: offline });
   assert.ok(!result.items.some(item => item.id === 'water'));
-  assert.equal(new Set(result.items.slice(0, 3).map(item => item.category_id)).size, 3);
+  const prices = result.items.map(item => item.price_with_vat);
+  assert.deepEqual(prices, [...prices].sort((a, b) => b - a));
 });
 
 test('one RTR AI answers restaurant questions from the menu page without needing menu storage', async () => {
@@ -316,8 +319,8 @@ test('eligible Special dishes precede regular dishes without category diversity 
     { id: 'pizza', name: 'Salmon pizza', description: 'Salmon and cheese', price: 120000, vat: 0, category_id: 'pizza', badges: [] },
   ];
   const result = await recommend({ input: input(), items: [...regular, ...specials], categories, ai: offline });
-  assert.deepEqual(result.items.slice(0, 3).map(item => item.id), specials.map(item => item.id));
-  assert.equal(result.items[3].id, 'pasta');
+  assert.deepEqual(result.items.slice(0, 3).map(item => item.id), [...specials].reverse().map(item => item.id));
+  assert.equal(result.items[3].id, 'pizza');
 });
 
 test('Special priority never overrides budget, dietary restrictions or the requested ingredient', async () => {

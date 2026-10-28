@@ -5,6 +5,7 @@ import { createApp, createRateLimiter } from '../src/app.js';
 import { HttpError } from '../src/errors.js';
 import { createAuth } from '../src/auth.js';
 import { loadConfig } from '../src/config.js';
+import { withQueryContract } from './helpers/intent-fixture.js';
 
 const cat = '10000000-0000-4000-8000-000000000001';
 const hidden = '10000000-0000-4000-8000-000000000002';
@@ -12,8 +13,8 @@ const id = '20000000-0000-4000-8000-000000000001';
 const dish = { id, name: 'Garden salad', description: 'Vegetables', category_id: cat, price: 100000, vat: 10, badges: ['vegan'], image_url: null, thumbnail_url: null, created_at: '2026-10-01T00:00:00Z' };
 const config = { production: false, origins: ['http://localhost:8080'], dailyLimit: 500, trustProxy: false, supabaseUrl: 'https://example.supabase.co', supabaseKey: 'public-key', sessionSecret: 'test-secret-test-secret-test-secret' };
 
-function db(rows = [dish]) {
-  const tables = { menu_items: rows, categories: [{ id: cat, is_active: true }, { id: hidden, is_active: false }], page_views: [], menu_item_views: [] };
+function db(rows = [dish], categoryRows) {
+  const tables = { menu_items: rows, categories: categoryRows || [{ id: cat, is_active: true }, { id: hidden, is_active: false }], page_views: [], menu_item_views: [] };
   const writes = [];
   const client = {
     writes,
@@ -36,12 +37,12 @@ function db(rows = [dish]) {
   };
   return client;
 }
-function app({ rows, admin = false, knowledge, ai } = {}) {
-  const client = db(rows);
+function app({ rows, categories, admin = false, knowledge, ai, onChatDiagnostic } = {}) {
+  const client = db(rows, categories);
   const server = createApp(config, {
     auth: { publicClient: client, authenticate: async () => null, admin: async () => { if (!admin) throw new HttpError(401, 'Please sign in.'); return { client, user: { id: 'admin' } }; } },
-    knowledge,
-    ai: ai || { configured: false, json: async () => { throw new Error('offline'); }, translate: async () => { throw new Error('offline'); } },
+    knowledge, onChatDiagnostic: onChatDiagnostic || (() => {}),
+    ai: withQueryContract(ai || { configured: false, json: async () => { throw new Error('offline'); }, translate: async () => { throw new Error('offline'); } }),
   });
   return { client, handler: server.listeners('request')[0] };
 }
@@ -328,4 +329,31 @@ test('changing the chat language keeps the same conversation and earlier context
   assert.equal(second.body.language, 'ko');
   assert.equal(second.body.conversationId, first.body.conversationId);
   assert.deepEqual(memories[1], [firstQuestion.content]);
+});
+
+
+test('the HTTP chat workflow replaces old cocktail references with a verified broad alcohol-free search', async () => {
+  const soft = '30000000-0000-4000-8000-000000000001';
+  const cocktails = '30000000-0000-4000-8000-000000000002';
+  const orange = { ...dish, id: '40000000-0000-4000-8000-000000000001', name: 'Orange juice', description: 'Fresh orange juice', badges: [], category_id: soft };
+  const soda = { ...orange, id: '40000000-0000-4000-8000-000000000002', name: 'Soda', description: 'Sprite' };
+  const cocktail = { ...orange, id: '40000000-0000-4000-8000-000000000003', name: 'Sandy Beach', description: 'Pineapple and rum', category_id: cocktails };
+  const events = [];
+  const { handler } = app({ rows: [orange, soda, cocktail], categories: [{ id: soft, name: 'soft_drinks', display_name: 'Soft Drinks', is_active: true }, { id: cocktails, name: 'cocktails', display_name: 'Cocktails', is_active: true }], onChatDiagnostic: event => events.push(event),
+    ai: { json: async (_system, data) => {
+      if (data.dishes) return { reply: 'Các lựa chọn từ thực đơn.' };
+      if (data.conversation.at(-1).content === 'cocktail') return { topic: 'menu', kind: 'drink', drinkType: 'cocktail', alcohol: 'alcoholic', queryMode: 'new_search', searchTerms: [{ type: 'beverage_type', value: 'cocktail', source: 'cocktail' }] };
+      return { topic: 'menu', kind: 'food', drinkType: 'wine', alcohol: 'none', scope: 'previous', referenceIds: [cocktail.id], keywords: ['delicious', 'non-alcoholic'], queryMode: 'detail', searchTerms: [{ type: 'kind', value: 'drink', source: 'đồ uống' }, { type: 'alcohol', value: 'none', source: 'không cồn' }, { type: 'preference', value: 'delicious', source: 'ngon' }] };
+    } },
+  });
+  const firstQuestion = { role: 'user', content: 'cocktail' };
+  const first = await request(handler, '/api/chat', { method: 'POST', body: { language: 'vi', messages: [firstQuestion] } });
+  assert.deepEqual(first.body.items.map(item => item.id), [cocktail.id]);
+  const second = await request(handler, '/api/chat', { method: 'POST', body: { language: 'vi', conversationId: first.body.conversationId, messages: [firstQuestion, { role: 'assistant', content: first.body.reply }, { role: 'user', content: 'đồ uống không cồn ngon' }] } });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.conversationId, first.body.conversationId);
+  assert.deepEqual(new Set(second.body.items.map(item => item.id)), new Set([orange.id, soda.id]));
+  assert.equal(second.body.preferences.scope, 'catalog');
+  assert.match(second.body.requestId, /^[a-f0-9-]{36}$/);
+  assert.deepEqual(events, []);
 });
