@@ -131,3 +131,38 @@ export function menuFlavourSummary(item, language = 'en') {
   const locale = language === 'cn' ? 'zh' : language === 'kz' ? 'kk' : language;
   return words[0].replace('{notes}', new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(profiles.map(key => labels[key])));
 }
+
+// Explicit category names constrain retrieval even when the intent model omits the subtype.
+export function explicitBeverageRequest(message) {
+  const text = normalize(message).normalize('NFC');
+  // A recipe/detail question mentioning juice or coffee is not a request to switch categories.
+  if (/thanh phan|nguyen lieu|co chua|ingredients?|contains?|made (?:of|with)|thanh toan|opening hours|dia chi/.test(text)) return null;
+  const patterns = [
+    ['mocktail', /\bmocktails?\b|моктеил[а-я]*|モクテル/gu],
+    ['cocktail', /\b(?:cocktails?|cocteles?|coctel)\b|коктеил[а-я]*|칵테일|カクテル|鸡尾酒|雞尾酒/gu],
+    ['juice', /\b(?:fruit juice|juices?|nuoc ep|jugos?|zumos?|succo|jus)\b|果汁|주스|ジュース|шырын[а-я]*|\bсок(?:и|а|ов)?\b/gu],
+    ['coffee', /\b(?:coffee|ca phe|cafe|caffe)\b|커피|コーヒー|咖啡|кофе/gu],
+    ['beer', /\b(?:beers?|bia|cerveza|birra|biere)\b|맥주|ビール|啤酒|пиво/gu],
+    ['wine', /\b(?:wines?|ruou vang|vino|vin|prosecco)\b|와인|ワイン|葡萄酒|вино/gu],
+    ['tea', /\b(?:tea|tra)\b|紅茶|緑茶|奶茶|чай/gu],
+    ['soft_drink', /\b(?:soft drinks?|nuoc ngot|soda)\b/gu],
+    ['spirit', /\b(?:spirits?|ruou manh)\b/gu],
+  ];
+  const found = [];
+  for (const [type, pattern] of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const before = text.slice(Math.max(0, match.index - 45), match.index);
+      if (/(?:khong (?:muon|thich|lay|chon)|avoid|exclude|without|instead of|no|not|pas de|sin|senza)\s*$/.test(before)) continue;
+      found.push({ type, start: match.index, end: match.index + match[0].length });
+    }
+  }
+  if (new Set(found.map(match => match.type)).size !== 1) return null;
+  const type = found[0]?.type;
+  if (!type) return null;
+  let remainder = text;
+  for (const match of [...found].sort((a, b) => b.start - a.start)) remainder = remainder.slice(0, match.start) + ' ' + remainder.slice(match.end);
+  // Only an unqualified category recommendation can bypass a failed intent provider.
+  // Price, ingredient, allergy and alcohol qualifiers leave non-whitelisted words here.
+  const simple = !remainder.replace(/\b(?:t|toi|minh|tao|ban|cho|xin|nha|hang|co|the|vay|thi|nao|gi|ngon|nhat|hay|tot|goi|y|muon|uong|thu|loai|mon|mot|nhung|cac|khong|please|what|which|is|are|the|best|good|recommend|suggest|me|a|an|some|any|do|you|have)\b/g, '').replace(/[\s?!？!.,。]+/g, '');
+  return { type, simple };
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { beverageProfile, requestsAlcoholFree, isAlcoholOnlyFollowup } from '../src/menu-filters.js';
+import { beverageProfile, requestsAlcoholFree, isAlcoholOnlyFollowup, explicitBeverageRequest } from '../src/menu-filters.js';
 import { createMenuRetriever } from '../src/menu-retrieval.js';
 import { recommend } from '../src/recommendations.js';
 import { chatSchema } from '../src/validation.js';
@@ -95,7 +95,7 @@ test('non-alcoholic preferences persist for subsequent drink requests but allow 
 });
 
 test('an unavailable requested juice does not produce unrelated drink alternatives', async () => {
-  const result = await recommend({ input: input(), ...catalog, ai: { json: async () => ({ topic: 'menu', kind: 'drink', drinkType: 'juice', keywords: ['mango'] }) } });
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'Có nước ép xoài không?' }] }), ...catalog, ai: { json: async () => ({ topic: 'menu', kind: 'drink', drinkType: 'juice', keywords: ['mango'] }) } });
   assert.deepEqual(result.items, []);
   assert.equal(result.alternatives, false);
 });
@@ -131,4 +131,74 @@ test('a known alcohol-free follow-up remains safely filtered when intent extract
   assert.equal(result.mode, 'filters');
   assert.deepEqual(result.items.map(item => item.id), ['orange', 'tropical']);
   assert.match(result.reply, /Lychee, pineapple & melon juice/);
+});
+
+
+test('an explicit cocktail request cannot become generic drinks when the model omits drinkType', async () => {
+  const extras = [item('sprite', 'SPRITE', 'Sprite', 'soft_drinks', 32400), item('tiger', 'TIGER', 'Tiger ABV 5.0%', 'beers', 55000), item('espresso', 'ESPRESSO', 'Espresso', 'coffee', 75600), item('whisky', 'JW BLACK LABEL', 'Blended Scotch Whisky', 'spirits', 93500)];
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), items: [...items, ...extras], categories: [...categories, { id: 'beers', name: 'beers' }, { id: 'spirits', name: 'spirits' }], ai: { json: async (_system, data) => data.dishes ? { reply: 'SANDY BEACH có vị chua ngọt từ dứa và chanh.' } : { topic: 'menu', kind: 'drink', drinkType: 'any', keywords: [], alcohol: 'any' } } });
+  assert.deepEqual(result.items.map(item => item.id), ['sandy']);
+  assert.equal(result.preferences.drinkType, 'cocktail');
+});
+
+test('an explicit cocktail request starts a fresh category search instead of reusing prior juice cards', async () => {
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), ...catalog,
+    previous: { intent: { ...intent, drinkType: 'juice', alcohol: 'any' }, selectedIds: ['orange', 'tropical'] },
+    ai: { json: async (_system, data) => data.dishes ? { reply: 'Try SANDY BEACH.' } : { topic: 'restaurant', kind: 'food', scope: 'previous', referenceIds: ['orange'], keywords: ['juice'] } },
+  });
+  assert.deepEqual(result.items.map(item => item.id), ['sandy']);
+});
+
+test('an unqualified named-category request remains category-bound during intent-provider outages', async () => {
+  const result = await recommend({ input: input({ context: 'home', messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), ...catalog,
+    ai: { json: async () => { throw new Error('429'); } },
+    restaurant: async () => { throw new Error('Must not route a simple cocktail request to restaurant knowledge'); },
+  });
+  assert.equal(result.mode, 'filters');
+  assert.deepEqual(result.items.map(item => item.id), ['sandy']);
+});
+
+test('explicit category recognition avoids negatives, mixed requests, recipe questions and ambiguous stop words', () => {
+  assert.deepEqual(explicitBeverageRequest('cocktail nào ngon nhất'), { type: 'cocktail', simple: true });
+  assert.deepEqual(explicitBeverageRequest('Which cocktail is the best?'), { type: 'cocktail', simple: true });
+  assert.equal(explicitBeverageRequest('SANDY BEACH có chứa nước ép không?'), null);
+  assert.equal(explicitBeverageRequest('Không muốn cocktail, gợi ý nước ép').type, 'juice');
+  assert.equal(explicitBeverageRequest('cocktail và nước ép'), null);
+  assert.equal(explicitBeverageRequest('A question in the selected language'), null);
+  assert.equal(explicitBeverageRequest('cocktail không đường').simple, false);
+  assert.equal(explicitBeverageRequest('cocktail dưới 100k').simple, false);
+});
+
+test('cocktails without alcohol use the mocktail category instead of alcoholic cocktail cards', async () => {
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'Gợi ý cocktail không cồn' }] }), ...catalog,
+    ai: { json: async (_system, data) => data.dishes ? { reply: 'A LITTLE LOVE là lựa chọn không cồn.' } : { topic: 'menu', kind: 'drink', drinkType: 'cocktail', alcohol: 'any' } },
+  });
+  assert.deepEqual(result.items.map(item => item.id), ['rose']);
+  assert.equal(result.preferences.drinkType, 'mocktail');
+  assert.equal(result.preferences.alcohol, 'none');
+});
+
+test('best cocktail suggestions are limited to a lead choice and one alternative, without claiming popularity', async () => {
+  const cocktails = [1, 2, 3, 4].map(n => item(`cocktail-${n}`, `COCKTAIL ${n}`, 'Pineapple and rum', 'cocktails', 100000 + n));
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), items: cocktails, categories,
+    ai: { json: async (system, data) => {
+      if (!data.dishes) return { topic: 'menu', kind: 'drink', popular: true };
+      assert.equal(data.dishes.length, 2);
+      assert.match(system, /Taste is subjective/);
+      return { reply: 'Try the first option or the second for a different balance.' };
+    } },
+  });
+  assert.equal(result.items.length, 2);
+  assert.equal(result.preferences.popular, false);
+});
+
+
+test('category-bound fallback retains previous price limits during provider outages', async () => {
+  const previous = { intent: { ...intent, drinkType: 'juice', maxPrice: 100000 } };
+  const result = await recommend({ input: input({ messages: [{ role: 'user', content: 'cocktail nào ngon nhất' }] }), ...catalog, previous,
+    ai: { json: async () => { throw new Error('429'); } },
+  });
+  assert.deepEqual(result.items, []); // The only cocktail is above the retained 100k limit.
+  assert.equal(result.preferences.maxPrice, 100000);
+  assert.equal(result.preferences.drinkType, 'cocktail');
 });

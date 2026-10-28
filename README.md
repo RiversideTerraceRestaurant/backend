@@ -151,3 +151,14 @@ when intent extraction is unavailable, without guessing new free-text requests.
 During answer-generation rate limits, deterministic tasting summaries derived
 from listed ingredients supplement recipe descriptions in all supported languages.
 They do not infer heat, crispness or unspecified fruit varieties.
+
+## Explicit beverage-category requests
+
+Explicit category requests such as “cocktail nào ngon nhất” constrain the
+server-side search even if the intent model returns generic drinks or stale
+previous references. Simple unqualified requests can still use category-bound
+fallback retrieval during AI outages; requests with unresolved ingredient,
+price or dietary qualifiers still require intent extraction. Previous dietary
+and price constraints remain in that fallback. Alcohol-free cocktails map to
+mocktails. “Best” category requests show at most a lead option and one alternative,
+with recipe-based explanations and no invented popularity or objective ranking.
