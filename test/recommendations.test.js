@@ -51,10 +51,11 @@ test('natural-language dietary requirements intersect with explicit filters', as
   const result = await recommend({ input: input({ action: 'chat', preferences: { diet: 'gluten_free' } }), items, ai });
   assert.deepEqual(result.items, []);
 });
-test('asks for clarification instead of suggesting against an ambiguous group budget', async () => {
-  const ai = { json: async () => ({ diet: 'any', maxPrice: null, mild: false, avoid: [], keywords: [], popular: false, clarification: 'Ngân sách này là cho mỗi món hay cả bàn?' }) };
+test('clarifies an ambiguous group budget while showing real dishes priced individually', async () => {
+  const ai = { json: async () => ({ diet: 'any', maxPrice: null, mild: false, avoid: [], keywords: [], popular: false, clarification: 'Ngân sách này là cho mỗi món hay cả bàn?', clarificationReason: 'budget' }) };
   const result = await recommend({ input: input({ action: 'chat' }), items, ai });
-  assert.deepEqual(result.items, []);
+  assert.ok(result.items.length > 0);
+  assert.ok(result.items.every(item => items.some(real => real.id === item.id)));
   assert.match(result.reply, /cả bàn/);
 });
 test('popularity uses actual view counts and discloses absent tracking data', async () => {
@@ -222,4 +223,82 @@ test('mixed restaurant and menu answers use one detected language', async () => 
   assert.equal(result.language, 'fr');
   assert.match(result.reply, /Da Nang/);
   assert.match(result.reply, /quelques plats/);
+});
+
+test('a broad salmon request searches the Italian menu and returns cards despite optional clarification', async () => {
+  const salmon = [
+    { id: 'salmon-pasta', name: 'SALMONE PASTA', description: 'Salmon, cream and cherry tomatoes', price: 200000, vat: 10, badges: [] },
+    { id: 'salmon-pizza', name: 'SALMONE AFFUMICATO PIZZA', description: 'Smoked salmon, cream cheese and capers', price: 230000, vat: 10, badges: [] },
+  ];
+  let catalogCalls = 0;
+  let answerCalls = 0;
+  const result = await recommend({
+    input: input({ action: 'chat', context: 'home', messages: [{ role: 'user', content: 't cần món với cá hồi' }] }),
+    getCatalog: async () => { catalogCalls++; return { items: [...items, ...salmon], categories: [], counts: [], popularityAvailable: false }; },
+    ai: { json: async (system, data) => {
+      if (!data.dishes) {
+        assert.match(system, /ITALIAN restaurant/);
+        return { topic: 'menu', keywords: ['salmon'], clarification: 'Bạn muốn nướng, chiên hay sashimi?', clarificationReason: 'preference' };
+      }
+      answerCalls++;
+      assert.match(system, /recommend the supplied real menu dishes immediately/);
+      assert.deepEqual(new Set(data.dishes.map(item => item.name)), new Set(salmon.map(item => item.name)));
+      assert.equal(data.exactMatch, true);
+      return { reply: 'Bạn thử SALMONE PASTA hoặc SALMONE AFFUMICATO PIZZA nhé.' };
+    } },
+  });
+  assert.equal(catalogCalls, 1);
+  assert.equal(answerCalls, 1);
+  assert.deepEqual(new Set(result.items.map(item => item.id)), new Set(salmon.map(item => item.id)));
+  assert.doesNotMatch(result.reply, /sashimi|Bạn muốn/);
+  assert.equal(result.alternatives, false);
+});
+
+test('missing requested dishes produce clearly labelled real alternatives without relaxing dietary or price filters', async () => {
+  let state;
+  const result = await recommend({
+    input: input({ action: 'chat', preferences: { diet: 'vegan', maxPrice: 100000, mild: true, avoid: ['nuts'] } }),
+    items,
+    ai: { json: async (_system, data) => {
+      if (!data.dishes) return { topic: 'menu', keywords: ['sashimi'], diet: 'vegan' };
+      assert.equal(data.exactMatch, false);
+      assert.deepEqual(data.requestedKeywords, ['sashimi']);
+      assert.deepEqual(data.dishes.map(item => item.name), ['Garden salad']);
+      return { reply: 'Bạn có thể thử Garden salad.' };
+    } },
+    onState: value => { state = value; },
+  });
+  assert.equal(result.alternatives, true);
+  assert.match(result.reply, /chưa tìm thấy món khớp đúng yêu cầu/);
+  assert.deepEqual(result.items.map(item => item.id), ['1']);
+  assert.deepEqual(state.selectedIds, ['1']);
+  assert.deepEqual(state.intent.keywords, ['sashimi']);
+});
+
+test('answer-generation outages still return actual matching dish cards', async () => {
+  const result = await recommend({
+    input: input({ action: 'chat' }), items,
+    ai: { json: async (_system, data) => {
+      if (!data.dishes) return { topic: 'menu', keywords: ['beef'], clarification: 'How do you want it cooked?' };
+      throw new Error('Provider unavailable');
+    } },
+  });
+  assert.equal(result.mode, 'filters');
+  assert.deepEqual(result.items.map(item => item.id), ['2']);
+  assert.match(result.reply, /Bạn thử những món này/);
+});
+
+test('no safe alternatives means an honest empty result, never dishes violating mandatory restrictions', async () => {
+  let generations = 0;
+  const result = await recommend({
+    input: input({ action: 'chat', preferences: { diet: 'gluten_free', maxPrice: 100000 } }), items,
+    ai: { json: async (_system, data) => {
+      if (data.dishes) generations++;
+      return { topic: 'menu', keywords: ['salmon'] };
+    } },
+  });
+  assert.deepEqual(result.items, []);
+  assert.equal(result.alternatives, false);
+  assert.equal(generations, 0);
+  assert.match(result.reply, /Chưa có món phù hợp/);
 });

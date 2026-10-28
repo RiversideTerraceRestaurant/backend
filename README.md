@@ -97,3 +97,18 @@ widget updates the shared language context, including the selector and page
 copy. A manual selection made during an in-flight request takes precedence.
 Unsupported or ambiguous input retains the current language. No extra AI
 request is added, and changing language does not reset the conversation.
+
+## Menu-grounded recommendations
+
+RTR AI represents the Italian restaurant and retrieves current menu dishes for
+food questions before answering. Optional taste/cooking-style clarification
+never suppresses dish cards. Broad ingredient requests are actionable as-is.
+Ambiguous group budgets can still receive a clarification alongside individual
+menu prices; the assistant must not claim a complete meal fits that total.
+
+If a catalog search has no exact keyword match, alternatives may be offered
+with an explicit notice in the response language. Only desired search keywords
+are relaxed; price, diet, avoided ingredients, mildness and category constraints
+still apply. Previous-item detail questions are not replaced with unrelated
+alternatives. If no eligible dishes exist, an empty result is returned honestly.
+Menu cards remain available if answer generation fails after intent extraction.
