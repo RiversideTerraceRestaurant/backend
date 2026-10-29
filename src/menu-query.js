@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { menuSubject } from './menu-subjects.js';
 import { normalize, requestsAlcoholFree, isAlcoholOnlyFollowup } from './menu-filters.js';
 
 export const queryModeSchema = z.enum(['new_search', 'refine', 'detail']);
@@ -35,6 +36,9 @@ function quotedBudget(term) {
 // the previously shown "Steak Salad" just because the model expanded the name.
 function groundTerm(term, catalog, previous, issues) {
   if (!catalog || !['ingredient', 'dish_type', 'dish_name'].includes(term.type)) return term;
+  const quotedCategory = menuSubject(term.source, catalog.categories);
+  if (quotedCategory.categoryIds.length && !catalog.items.some(item => fingerprint(item.name) === fingerprint(term.source))) return { ...term, type: 'dish_type', value: quotedCategory.value };
+  if (menuSubject(term.value, catalog.categories).categoryIds.length && !catalog.items.some(item => fingerprint(item.name) === fingerprint(term.value))) return { ...term, type: 'dish_type' };
   const source = fingerprint(term.source);
   const value = fingerprint(term.value);
   const named = catalog.items.find(item => fingerprint(item.name) === value);
@@ -90,12 +94,24 @@ export function resolveMenuQuery({ intent, input, previous, queryMode, searchTer
   else if (structured) next.alcohol = mode !== 'new_search' ? previous?.intent?.alcohol || 'any' : 'any';
   if (requestsAlcoholFree(input.messages.at(-1).content)) next.alcohol = 'none';
   if (structured) {
-    const ingredientTerms = (mode === 'new_search' ? current : terms).filter(term => ['ingredient', 'dish_type', 'dish_name'].includes(term.type));
+    const active = mode === 'new_search' ? current : terms;
+    const ingredientTerms = active.filter(term => term.type === 'ingredient');
+    const subjectTerms = active.filter(term => ['dish_type', 'dish_name'].includes(term.type));
+    const position = term => latest.indexOf(fingerprint(term.value)) >= 0 ? latest.indexOf(fingerprint(term.value)) : latest.indexOf(fingerprint(term.source));
+    subjectTerms.sort((a, b) => position(a) - position(b));
     next.keywords = [...new Set(ingredientTerms.map(term => term.value))];
+    next.subjects = [...new Map(subjectTerms.map(term => {
+      const subject = term.type === 'dish_name' ? { value: term.value, categoryIds: [] } : menuSubject(term.value, catalog?.categories);
+      return [subject.value, subject];
+    })).values()];
     if (terms.some(term => !['ingredient', 'dish_type', 'dish_name'].includes(term.type))) issues.push('non_search_terms_separated');
-    if (mode === 'refine' && !ingredientTerms.length && !currentKind && !currentDrink) next.keywords = previous?.intent?.keywords || [];
+    if (mode === 'refine' && !currentKind && !currentDrink) {
+      if (!ingredientTerms.length) next.keywords = previous?.intent?.keywords || [];
+      if (!subjectTerms.length) next.subjects = previous?.intent?.subjects || [];
+    }
   } else if (explicitBeverage?.simple) {
     next.keywords = [];
+    next.subjects = [];
     next.clarification = '';
     next.popular = false;
   }
@@ -103,7 +119,7 @@ export function resolveMenuQuery({ intent, input, previous, queryMode, searchTer
   if (alcoholOnly && previous?.intent?.kind === 'drink') {
     const prior = previous.intent;
     const limit = Math.min(prior.maxPrice ?? Infinity, next.maxPrice ?? Infinity);
-    next = { ...next, kind: 'drink', drinkType: prior.drinkType || 'any', keywords: prior.keywords || [],
+    next = { ...next, kind: 'drink', drinkType: prior.drinkType || 'any', keywords: prior.keywords || [], subjects: prior.subjects || [],
       diet: prior.diet || next.diet, maxPrice: Number.isFinite(limit) ? limit : null,
       mild: prior.mild || next.mild, avoid: [...new Set([...(prior.avoid || []), ...next.avoid])],
       popular: prior.popular || next.popular, alcohol: 'none' };

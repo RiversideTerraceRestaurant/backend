@@ -44,6 +44,7 @@ trap rollback ERR
 # .env and the persistent knowledge file remain on the server.
 git switch --detach "$revision"
 npm ci --omit=dev
+node --env-file-if-exists=.env deployment/update-restaurant-contact.mjs
 pm2 restart rtr-backend
 health
 pm2 save

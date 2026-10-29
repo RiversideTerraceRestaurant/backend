@@ -1,3 +1,4 @@
+import { matchesMenuSubject } from './menu-subjects.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { filterItems, normalize, beverageProfile } from './menu-filters.js';
 
@@ -8,12 +9,14 @@ function queryFor(intent, preferences) {
     maxPrice: Math.min(intent.maxPrice ?? Infinity, preferences.maxPrice ?? Infinity),
     mild: intent.mild || preferences.mild,
     avoid: unique([...intent.avoid, ...preferences.avoid].map(normalize)),
+    subjects: (intent.subjects || []).map(subject => ({ value: normalize(subject.value), categoryIds: unique(subject.categoryIds) })).sort((a, b) => a.value.localeCompare(b.value)),
     keywords: unique(intent.keywords.map(normalize)), kind: intent.kind, includeKids: intent.includeKids,
     drinkType: intent.drinkType || 'any', alcohol: intent.alcohol || 'any',
   };
 }
 function narrows(next, prior) {
   return JSON.stringify(next.keywords) === JSON.stringify(prior.keywords)
+    && JSON.stringify(next.subjects) === JSON.stringify(prior.subjects)
     && next.kind === prior.kind && next.includeKids === prior.includeKids
     && (prior.drinkType === 'any' || next.drinkType === prior.drinkType)
     && (prior.alcohol === 'any' || next.alcohol === prior.alcohol)
@@ -64,7 +67,7 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
         ids = search.candidateIds;
         strategy = 'narrowed';
       }
-      const rejected = { kids: 0, beverageType: 0, alcohol: 0, kind: 0, keywords: 0, preferences: 0 };
+      const rejected = { kids: 0, beverageType: 0, alcohol: 0, kind: 0, subjects: 0, keywords: 0, preferences: 0 };
       const reject = reason => { rejected[reason]++; return false; };
       if (strategy !== 'cache') {
         const pool = ids ? ids.map(id => documents.get(id)).filter(Boolean) : [...documents.values()];
@@ -76,6 +79,7 @@ export function createMenuRetriever({ maxQueries = 200 } = {}) {
           if (categories.length && query.kind !== 'any') {
             if (query.kind === 'drink' ? !doc.drink : query.kind === 'dessert' ? !doc.dessert : doc.drink || doc.dessert) return reject('kind');
           }
+          if (strategy !== 'previous' && query.subjects.length && !query.subjects.some(subject => matchesMenuSubject(doc.item, subject, doc.text))) return reject('subjects');
           // A prior-item question is resolved by ID, so keywords need not repeat the dish name.
           if (strategy !== 'previous' && query.keywords.length && !query.keywords.every(word => doc.text.includes(word))) return reject('keywords');
           return filterItems(filterItems([doc.item], preferences), intent).length > 0 || reject('preferences');

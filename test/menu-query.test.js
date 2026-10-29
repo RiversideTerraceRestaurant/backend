@@ -127,7 +127,8 @@ test('a partial dish-family request searches the whole menu instead of binding t
       searchTerms: [{ type: 'dish_name', value: 'STEAK SALAD', source: 'steak' }, { type: 'ingredient', value: 'salad', source: 'salad' }] }),
   });
   assert.deepEqual(result.items.map(item => item.id), ['RIB-EYE STEAK', 'T-BONE STEAK', 'TOP BLADE STEAK', 'STEAK SALAD']);
-  assert.deepEqual(result.preferences.keywords, ['steak']);
+  assert.deepEqual(result.preferences.keywords, []);
+  assert.deepEqual(result.preferences.subjects, [{ value: 'steak', categoryIds: [] }]);
   assert.equal(result.preferences.maxPrice, null);
   assert.equal(result.preferences.scope, 'catalog');
 });
@@ -261,4 +262,77 @@ test('an intent with a role label instead of a guest quote recovers through vali
   assert.equal(result.mode, 'ai');
   assert.deepEqual(new Set(result.items.map(item => item.id)), expected);
   assert.deepEqual(calls.slice(0, 2), ['openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
+});
+
+const mealCategories = ['pasta', 'pizza', 'mains', 'Special Pasta'].map(id => ({ id, name: id, display_name: id }));
+const meals = [
+  make('PASTA ONE', 'Beef, mushroom and parmesan', 'pasta', 200000),
+  make('PASTA TWO', 'Beef, mushroom and tomato', 'pasta', 180000),
+  make('PASTA THREE', 'Cream and salmon', 'pasta', 160000),
+  make('PIZZA ONE', 'Beef, mushroom and mozzarella', 'pizza', 300000),
+  make('PIZZA TWO', 'Beef, mushroom and tomato', 'pizza', 250000),
+  make('SIDE PASTA', 'Chicken served with pasta and beef', 'mains', 900000),
+];
+
+test('multiple requested dish categories are alternatives, cover both groups, and follow guest order rather than price or model order', async () => {
+  for (const type of ['dish_type', 'ingredient', 'dish_name']) {
+    const retriever = createMenuRetriever();
+    for (const order of [['pasta', 'pizza'], ['pizza', 'pasta']]) {
+      const result = await recommend({ input: input(`${order.join(' ')} ngon`), items: meals, categories: mealCategories, retriever,
+        ai: model({ ...base, kind: 'food', keywords: ['pasta', 'pizza'], queryMode: 'new_search', searchTerms: order.toReversed().map(value => ({ type, value, source: value })) }),
+      });
+      assert.equal(result.alternatives, false);
+      assert.deepEqual(result.items.map(item => item.category_id), [order[0], order[0], order[1], order[1]]);
+      assert.ok(!result.items.some(item => item.id === 'SIDE PASTA'));
+      assert.deepEqual(result.preferences.keywords, []);
+      if (order[0] === 'pizza') assert.equal(result.retrieval.strategy, 'cache');
+    }
+  }
+});
+
+test('a corrected Italian-pasta request replaces old pizza terms and excludes main dishes with pasta sides', async () => {
+  let previous;
+  await recommend({ input: input('pasta pizza ngon'), items: meals, categories: mealCategories, onState: state => { previous = state; },
+    ai: model({ ...base, kind: 'food', queryMode: 'new_search', searchTerms: ['pasta', 'pizza'].map(value => ({ type: 'dish_type', value, source: value })) }),
+  });
+  for (const value of ['pasta', 'mì Ý']) {
+    const result = await recommend({ input: input('tao muốn ăn mì Ý ấy'), items: meals, categories: mealCategories, previous,
+      ai: model({ ...base, kind: 'food', keywords: ['pasta', 'pizza'], queryMode: 'refine', searchTerms: [{ type: 'dish_type', value: 'pizza', source: 'pizza' }, { type: 'dish_type', value, source: 'mì Ý' }] }),
+    });
+    assert.equal(result.alternatives, false);
+    assert.equal(result.items.length, 3);
+    assert.ok(result.items.every(item => item.category_id === 'pasta'));
+    assert.deepEqual(result.preferences.subjects.map(subject => subject.value), ['pasta']);
+  }
+});
+
+test('required ingredients and budget intersect with alternative dish groups instead of becoming OR filters', async () => {
+  const result = await recommend({ input: input('pasta pizza bò nấm dưới 260k'), items: meals, categories: mealCategories,
+    ai: model({ ...base, kind: 'food', queryMode: 'new_search', searchTerms: [
+      ...['pasta', 'pizza'].map(value => ({ type: 'dish_type', value, source: value })),
+      { type: 'ingredient', value: 'beef', source: 'bò' }, { type: 'ingredient', value: 'mushroom', source: 'nấm' },
+      { type: 'budget', value: '260000', source: '260k' },
+    ] }),
+  });
+  assert.equal(result.alternatives, false);
+  assert.deepEqual(result.items.map(item => item.id), ['PASTA ONE', 'PASTA TWO', 'PIZZA TWO']);
+  assert.ok(result.items.every(item => item.price_with_vat <= 260000));
+});
+
+test('Special and price ranking apply within requested groups without hiding the second group', async () => {
+  const result = await recommend({ input: input('pasta pizza ngon'), items: [...meals, make('HOUSE PASTA', 'Beef and mushrooms', 'Special Pasta', 170000)], categories: mealCategories,
+    ai: model({ ...base, kind: 'food', queryMode: 'new_search', searchTerms: ['pasta', 'pizza'].map(value => ({ type: 'dish_type', value, source: value })) }),
+  });
+  assert.deepEqual(result.items.map(item => item.id), ['HOUSE PASTA', 'PASTA ONE', 'PIZZA ONE', 'PIZZA TWO']);
+});
+
+
+test('a quoted category cannot be expanded into a previously displayed side-pasta product', async () => {
+  const previous = { intent: { ...base, kind: 'food' }, selectedIds: ['SIDE PASTA'], selectedItems: [{ id: 'SIDE PASTA', name: 'SIDE PASTA' }] };
+  const result = await recommend({ input: input('tao muốn ăn mì Ý ấy'), items: meals, categories: mealCategories, previous,
+    ai: model({ ...base, kind: 'food', scope: 'previous', referenceIds: ['SIDE PASTA'], queryMode: 'detail', searchTerms: [{ type: 'dish_name', value: 'SIDE PASTA', source: 'mì Ý' }] }),
+  });
+  assert.equal(result.alternatives, false);
+  assert.ok(result.items.every(item => item.category_id === 'pasta'));
+  assert.equal(result.preferences.scope, 'catalog');
 });

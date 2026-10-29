@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { migrateRestaurantContact, updatedRestaurantContact } from '../deployment/update-restaurant-contact.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -72,4 +73,25 @@ test('unknown questions can return no citations and sections are data rather tha
   } } });
   assert.equal(result.mode, 'ai');
   assert.deepEqual(result.sources, []);
+});
+
+
+test('approved contact facts migrate persistent knowledge once while preserving custom sections and later admin edits', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'rtr-contact-'));
+  const path = join(directory, 'restaurant.md');
+  try {
+    const content = '# Custom restaurant notes\n\n## Contact\nPhone: 123.\nEmail: old@example.com\nOwner: Old name\n\n## Reservations\nCustom deposit policy.';
+    await writeFile(path, content);
+    assert.equal(await migrateRestaurantContact(path), true);
+    const migrated = await readFile(path, 'utf8');
+    assert.match(migrated, /Email: litalianoriverside@gmail.com/);
+    assert.match(migrated, /Chủ nhà hàng: Mr\. Darin/);
+    assert.match(migrated, /Phone: 123/);
+    assert.match(migrated, /Custom deposit policy/);
+    assert.doesNotMatch(migrated, /old@example.com|Old name/);
+    assert.equal(updatedRestaurantContact(migrated), migrated);
+    await writeFile(path, '# Later admin edit');
+    assert.equal(await migrateRestaurantContact(path), false);
+    assert.equal(await readFile(path, 'utf8'), '# Later admin edit');
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

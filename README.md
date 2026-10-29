@@ -225,3 +225,28 @@ time and cooldown information. `chat.ai_failure` identifies intent versus reply
 failures. Neither includes API keys, provider error bodies, prompts or guest
 messages. If every configured model/provider has exhausted its quota, some
 requests can still be unavailable; these changes do not increase account limits.
+
+
+## Ordered alternative dish groups
+
+The canonical query separates OR subjects (`dish_type` / `dish_name`) from AND
+ingredient requirements. Category names are grounded against the current catalog
+and category translations such as mì Ý resolve to Pasta. A category search uses
+category IDs, so a Mains recipe mentioning a pasta side cannot stand in for a
+Pasta-category dish. Model terms mislabelled as ingredients or product names are
+normalized when they identify an actual category. Quoted categories also override
+accidental expansion into a previously displayed product.
+
+Multiple requested groups receive coverage and are presented in the order the
+guest mentions them: pasta then pizza produces pasta cards before pizza cards.
+Special and price ranking apply within each requested group. The four-card maximum
+remains, without padding unavailable results. A corrected current subject replaces
+old subjects, so mì Ý after pasta/pizza searches Pasta alone. Ingredient, dietary,
+alcohol and explicit-budget requirements remain mandatory across all groups;
+cache keys and narrowing account for subjects independently of ingredient terms.
+
+The approved restaurant contact is litalianoriverside@gmail.com, with owner
+Mr. Darin. The default knowledge document and public website include these facts.
+Deployment applies `deployment/update-restaurant-contact.mjs` once to the active
+persistent knowledge file (respecting `KNOWLEDGE_BASE_PATH`), preserving unrelated
+sections. A marker prevents subsequent deployments from undoing later admin edits.

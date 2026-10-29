@@ -6,6 +6,8 @@ Riverside Terrace là nhà hàng Ý tại Đà Nẵng, Việt Nam. Nhà hàng kh
 ## Địa chỉ và liên hệ
 Địa chỉ: 493 Trần Hưng Đạo, phường An Hải, thành phố Đà Nẵng, Việt Nam.
 Điện thoại: (+84) 911 500 440.
+Email: litalianoriverside@gmail.com.
+Chủ nhà hàng: Mr. Darin.
 Khách có thể gọi số điện thoại trên để hỏi thông tin hoặc trao đổi nhu cầu đặt bàn. Trợ lý AI không thể kiểm tra bàn trống, nhận hay xác nhận đặt bàn.
 
 ## Không gian
