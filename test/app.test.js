@@ -357,3 +357,41 @@ test('the HTTP chat workflow replaces old cocktail references with a verified br
   assert.match(second.body.requestId, /^[a-f0-9-]{36}$/);
   assert.deepEqual(events, []);
 });
+
+test('chat uses the cached text menu and cached popularity beyond the old 15-second TTL without querying the database', async t => {
+  const row = { ...dish, image_url: 'https://example.com/dish.webp', description_vi: 'Rau củ', unexpected_binary: Buffer.alloc(4096), internal_note: 'not part of the public menu' };
+  const { handler, client } = app({ rows: [row] });
+  const from = client.from.bind(client), rpc = client.rpc.bind(client);
+  let reads = 0, statsReads = 0;
+  const selected = [];
+  client.from = table => {
+    if (['menu_items', 'categories'].includes(table)) reads++;
+    const query = from(table);
+    const select = query.select.bind(query);
+    query.select = columns => { if (table === 'menu_items') selected.push(columns); return select(columns); };
+    return query;
+  };
+  client.rpc = (...args) => { statsReads++; return rpc(...args); };
+  let time = Date.now();
+  t.mock.method(Date, 'now', () => time);
+  const payload = { action: 'suggest', language: 'vi', messages: [{ role: 'user', content: 'Find dishes' }] };
+  const first = await request(handler, '/api/chat', { method: 'POST', body: payload });
+  assert.equal(reads, 2);
+  assert.equal(statsReads, 1);
+  assert.ok(selected[0].includes('description_vi'));
+  assert.ok(!selected[0].includes('*'));
+  time += 60000;
+  for (const action of ['suggest', 'popular', 'suggest']) {
+    const result = await request(handler, '/api/chat', { method: 'POST', body: { ...payload, action } });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.items[0].description_vi, 'Rau củ');
+    assert.equal(result.body.items[0].image_url, 'https://example.com/dish.webp');
+    assert.equal(result.body.items[0].unexpected_binary, undefined);
+    assert.equal(result.body.items[0].internal_note, undefined);
+    assert.equal(result.body.items[0].price_with_vat, first.body.items[0].price_with_vat);
+  }
+  await request(handler, '/api/menu');
+  await request(handler, '/api/categories');
+  assert.equal(reads, 2);
+  assert.equal(statsReads, 1);
+});

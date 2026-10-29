@@ -250,3 +250,28 @@ Mr. Darin. The default knowledge document and public website include these facts
 Deployment applies `deployment/update-restaurant-contact.mjs` once to the active
 persistent knowledge file (respecting `KNOWLEDGE_BASE_PATH`), preserving unrelated
 sections. A marker prevents subsequent deployments from undoing later admin edits.
+
+
+## Shared in-memory menu snapshot
+
+The API preloads the full active catalog when its HTTP server starts. Public menu
+reads and AI retrieval share one process-local snapshot containing dish IDs,
+names, localized descriptions, prices, VAT, badges, category metadata and image
+URL strings. The loader explicitly selects these columns; no image files, image
+bytes or arbitrary extra columns are cached or sent to the model. Recommendation
+cards retain their image URLs. Only matching selected dish text is sent to AI.
+
+Warm chat requests do not re-query menu tables or popularity statistics. The old
+15-second request TTL has been removed. A background timer refreshes the snapshot
+every five minutes, independently of requests; this also picks up edits made
+directly in Supabase. Successful admin item/category/VAT changes immediately
+invalidate and preload a fresh snapshot. Maintenance jobs invalidate on completion
+or failure. Concurrent reads/refreshes share one pending load, and a write racing
+with a refresh prevents the old snapshot from being published.
+
+Background refresh failures retain the last usable snapshot. A known admin edit
+clears the old snapshot, so subsequent requests wait for fresh data rather than
+serve a price or item known to be out of date. Restarting the process reloads the
+snapshot from Supabase; no Redis or persistent image cache is required. The timer
+is unreferenced and stopped when the HTTP server closes. Existing retrieval-query
+and per-conversation caches continue to operate on the catalog version.

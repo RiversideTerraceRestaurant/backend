@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createAuth } from './auth.js';
 import { createAI } from './ai.js';
+import { createCatalogCache } from './catalog-cache.js';
 import { HttpError, unwrap } from './errors.js';
 import { categorySchema, chatSchema, idSchema, itemSchema, translationKeys } from './validation.js';
 import { recommend } from './recommendations.js';
@@ -39,10 +40,10 @@ export function createRateLimiter(now = Date.now) {
 }
 
 // Paginate server-side to avoid Supabase's default 1000-row cap.
-export async function allItems(client) {
+export async function allItems(client, columns = '*') {
   const items = [];
   for (let from = 0; ; from += 500) {
-    const page = unwrap(await client.from('menu_items').select('*').order('id').range(from, from + 499));
+    const page = unwrap(await client.from('menu_items').select(columns).order('id').range(from, from + 499));
     items.push(...page);
     if (page.length < 500) return items;
   }
@@ -69,33 +70,29 @@ export function createApp(config, dependencies = {}) {
     const result = await client.rpc('get_menu_item_view_counts');
     return { counts: result.error ? [] : result.data || [], popularityAvailable: !result.error && (result.data || []).some(row => Number(row.view_count) > 0) };
   };
+  // Only scalar/text dish data and presentation URLs; never image bytes or
+  // arbitrary extra columns. Admin tools still fetch full records separately.
+  const itemFields = ['id', 'name', 'description', ...translationKeys, 'price', 'vat', 'category_id', 'badges', 'image_url', 'thumbnail_url', 'created_at', 'updated_at'];
+  const categoryFields = ['id', 'name', 'display_name', 'display_order', 'is_active', 'created_at', 'updated_at'];
   const catalog = async () => {
-    const categories = unwrap(await auth.publicClient.from('categories').select('*').eq('is_active', true).order('display_order'));
+    const [categoryResult, rows, popularity] = await Promise.all([
+      auth.publicClient.from('categories').select(categoryFields.join(',')).eq('is_active', true).order('display_order'),
+      allItems(auth.publicClient, itemFields.join(',')),
+      countsFor(auth.publicClient).catch(() => ({ counts: [], popularityAvailable: false })),
+    ]);
+    const categories = unwrap(categoryResult).map(category => Object.fromEntries(categoryFields.filter(field => field in category).map(field => [field, category[field]])));
     const active = new Set(categories.map(category => category.id));
-    const items = (await allItems(auth.publicClient)).filter(item => active.has(item.category_id));
+    const items = rows.filter(item => active.has(item.category_id)).map(item => Object.fromEntries(itemFields.filter(field => field in item).map(field => [field, item[field]])));
     const catalogVersion = createHash('sha256').update(JSON.stringify([categories, items])).digest('hex');
-    return { categories, items, catalogVersion };
+    return { categories, items, catalogVersion, ...popularity };
   };
-  let cache = null;
-  let cacheAt = 0;
-  let catalogPending;
-  let catalogGeneration = 0;
-  function invalidateCatalog() { cache = null; catalogGeneration++; }
-  async function cachedCatalog() {
-    if (cache && Date.now() - cacheAt < 15000) return cache;
-    if (!catalogPending) catalogPending = (async () => {
-      // A write during a fetch must not repopulate the cache with the old snapshot.
-      while (true) {
-        const generation = catalogGeneration;
-        const result = await catalog();
-        if (generation !== catalogGeneration) continue;
-        cache = result; cacheAt = Date.now(); return result;
-      }
-    })().finally(() => { catalogPending = null; });
-    return catalogPending;
-  }
+  const catalogCache = createCatalogCache({ load: catalog,
+    onError: error => console.warn(JSON.stringify({ event: 'catalog.refresh_failed', status: error.status || 503 })),
+  });
+  const cachedCatalog = () => catalogCache.get();
+  const invalidateCatalog = () => catalogCache.invalidate();
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
@@ -155,7 +152,10 @@ export function createApp(config, dependencies = {}) {
         const answer = await recommend({
           input, ai, retriever, previous, onState: next => { state = next; },
           onDiagnostic: event => (dependencies.onChatDiagnostic || (entry => console.warn(JSON.stringify(entry))))({ requestId, ...event }),
-          getCatalog: async ({ popular }) => ({ ...await cachedCatalog(), ...(popular ? await countsFor(auth.publicClient) : { counts: [], popularityAvailable: false }) }),
+          getCatalog: async ({ popular }) => {
+            const snapshot = await cachedCatalog();
+            return { ...snapshot, ...(!popular ? { counts: [], popularityAvailable: false } : {}) };
+          },
           restaurant: async ({ memory, questions, language = input.language } = {}) => answerRestaurant({ input: { ...input, language }, knowledge: await knowledge.read(), ai, conversationContext: memory, previousQuestions: questions }),
         });
         // Missing, expired or mismatched context starts a fresh isolated conversation.
@@ -298,8 +298,9 @@ export function createApp(config, dependencies = {}) {
               if (changed) job.updated++; else job.skipped++;
               job.current++;
             }
-            job.status = 'complete'; invalidateCatalog();
+            job.status = 'complete';
           } catch (error) { job.status = 'failed'; job.errors.push(error.message); }
+          finally { invalidateCatalog(); }
         })();
         return send(res, job, 202);
       }
@@ -312,4 +313,7 @@ export function createApp(config, dependencies = {}) {
       else res.end();
     }
   });
+  server.on('listening', () => { void catalogCache.start(); });
+  server.on('close', () => catalogCache.stop());
+  return server;
 }
