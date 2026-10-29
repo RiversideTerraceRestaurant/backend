@@ -194,3 +194,34 @@ Chat responses include `appliedFilters` for visible budget/diet/mildness/avoidan
 alcohol chips and a `requestId`. Invalid-query, verified-empty and inherited-type
 fallback diagnostics contain filter metadata and rejection counts, not guest
 messages or chat history.
+
+## AI availability and rate limits
+
+A menu conversation normally uses one intent request and one recommendation
+request per turn. Provider token-per-minute quotas count across guests, so a
+healthy EC2 process can still receive provider HTTP 429 errors. In `GROQ_MODEL=auto`,
+the API discovers available models once and uses GPT-OSS 20B, then GPT-OSS 120B,
+then Llama 3.3 70B if advertised as active; Gemini remains the final provider.
+An explicitly pinned `GROQ_MODEL` stays pinned and does not rotate Groq models.
+
+Provider/model cooldowns honor `Retry-After`, Gemini retry details, and daily
+request reset headers. Successive requests skip cooling-down models. Recovery
+allows at most two delayed retries, no more than 12 seconds of total waiting,
+and a shared 25-second deadline per logical AI call. Malformed output may fail
+over within that call but does not disable the model for unrelated questions.
+GPT-OSS uses strict schema output and low reasoning effort to reduce malformed
+JSON and completion-budget waste. Other models keep compatible JSON mode.
+Intent responses must also pass schema and guest-quote validation before being
+accepted, so a role label such as `source: guest` cannot cause an immediate
+chat failure without trying the next available provider/model.
+
+The request keeps full guest messages, server memory and selected menu IDs,
+while limiting repeated assistant prose to 320 characters per message and
+removing duplicate classification instructions. Dish eligibility, pricing,
+Special ranking and recommendation instructions remain the same.
+
+Structured `ai.provider_result` logs contain model, status, token usage, elapsed
+time and cooldown information. `chat.ai_failure` identifies intent versus reply
+failures. Neither includes API keys, provider error bodies, prompts or guest
+messages. If every configured model/provider has exhausted its quota, some
+requests can still be unavailable; these changes do not increase account limits.

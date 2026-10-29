@@ -50,7 +50,7 @@ export async function allItems(client) {
 
 export function createApp(config, dependencies = {}) {
   const auth = dependencies.auth || createAuth(config);
-  const ai = dependencies.ai || createAI(config);
+  const ai = dependencies.ai || createAI(config, fetch, { onDiagnostic: dependencies.onAIDiagnostic || (entry => console.info(JSON.stringify(entry))) });
   const knowledge = dependencies.knowledge || createKnowledgeStore(config.knowledgePath);
   const conversations = createConversationCache();
   const retriever = createMenuRetriever();

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createAI } from '../src/ai.js';
 import { recommend } from '../src/recommendations.js';
 import { createMenuRetriever } from '../src/menu-retrieval.js';
 import { chatSchema } from '../src/validation.js';
@@ -243,4 +244,21 @@ test('explicit quick actions remain mandatory without a language model', async (
   const mild = await recommend({ input: { ...input('mild'), action: 'mild' }, items: food, categories: foodCategories });
   assert.ok(mild.items.length > 0);
   assert.ok(!mild.items.some(item => item.id === 'hot'));
+});
+
+
+test('an intent with a role label instead of a guest quote recovers through validated provider failover', async () => {
+  const calls = [];
+  const ai = createAI({ groqKey: 'test-secret' }, async (url, options) => {
+    if (url.endsWith('/models')) return Response.json({ data: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'].map(id => ({ id, active: true })) });
+    const body = JSON.parse(options.body);
+    const data = JSON.parse(body.messages[1].content);
+    calls.push(body.model);
+    const value = data.dishes ? { reply: 'Các món không cồn phù hợp.' } : { ...base, queryMode: 'new_search', searchTerms: body.model === 'openai/gpt-oss-20b' ? facts.map(term => ({ ...term, source: 'guest' })) : facts };
+    return Response.json({ choices: [{ message: { content: JSON.stringify(value) } }] });
+  });
+  const result = await recommend({ input: input(), items, categories, ai });
+  assert.equal(result.mode, 'ai');
+  assert.deepEqual(new Set(result.items.map(item => item.id)), expected);
+  assert.deepEqual(calls.slice(0, 2), ['openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
 });
