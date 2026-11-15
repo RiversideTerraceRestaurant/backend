@@ -8,7 +8,7 @@ Riverside Terrace là nhà hàng Ý tại Đà Nẵng, Việt Nam. Nhà hàng kh
 Điện thoại: (+84) 911 500 440.
 Email: litalianoriverside@gmail.com.
 Chủ nhà hàng: Mr. Darin.
-Khách có thể gọi số điện thoại trên để hỏi thông tin hoặc trao đổi nhu cầu đặt bàn. Trợ lý AI không thể kiểm tra bàn trống, nhận hay xác nhận đặt bàn.
+Khách có thể đặt bàn online tại trang Đặt bàn (/booking) cho tối đa 6 khách: chọn ngày, giờ, số khách và bàn, sau đó xác nhận mã gửi qua email; nhà hàng sẽ duyệt và gửi email xác nhận. Trợ lý AI có thể kiểm tra bàn trống khi khách hỏi kèm ngày, giờ và số khách, nhưng không tự xác nhận đặt bàn. Nhóm trên 6 khách vui lòng gọi số điện thoại trên.
 
 ## Không gian
 Nhà hàng có bốn khu vực: Terrace, Roma, Verona và Sorrento.

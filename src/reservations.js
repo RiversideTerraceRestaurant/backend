@@ -87,16 +87,10 @@ export function validateTablesForBooking(tables, bookingArea, guests) {
   if (tables.length > 1 && !consecutive) throw bad('Only adjacent, consecutively numbered tables may be selected.');
   if (bookingArea === 'TERRACE' && numbers.includes(6) && numbers.includes(7)) throw bad('Tables T6 and T7 cannot be joined.');
   if (guests <= 2 && tables.length !== 1) throw bad('Parties of 1-2 guests may select only one table.');
-  if (guests >= 3) {
-    const key = numbers.join(',');
-    const veronaPair = bookingArea === 'VERONA' && guests <= 4 && ['11,12', '13,14', '15,16'].includes(key);
-    if (bookingArea === 'VERONA' && numbers.some(number => number >= 11) && !veronaPair) {
-      throw bad('V11-12, V13-14 and V15-16 are fixed pairs and cannot be split or joined.');
-    }
-    if (!veronaPair && (tables.length !== Math.ceil(guests / 2) || !consecutive)) {
-      throw bad('Only the required number of consecutively numbered tables may be joined.');
-    }
+  if (bookingArea === 'VERONA' && numbers.some(number => number >= 11) && !VERONA_PAIRS.includes(numbers.join(','))) {
+    throw bad('V11-12, V13-14 and V15-16 are fixed pairs and cannot be split or joined.');
   }
+  if (hasSpareTable(tables, guests)) throw bad('Only the required number of consecutively numbered tables may be joined.');
 }
 
 /** Areas searched by "suggest best table", in priority order. */
@@ -105,31 +99,56 @@ export function suggestionAreas(seating, guests) {
   return guests <= 2 ? ['ROMA'] : ['VERONA', 'ROMA'];
 }
 
-/** Mirrors RTR BookingService.bestTableGroup: adjacent tables closest to the view. */
+const VERONA_PAIRS = ['11,12', '13,14', '15,16'];
+/** True when the group would still seat everyone without one of its end tables. */
+function hasSpareTable(tables, guests) {
+  if (tables.length < 2) return false;
+  const sorted = [...tables].sort((a, b) => tableNumberValue(a) - tableNumberValue(b));
+  const capacity = sorted.reduce((sum, table) => sum + table.capacity, 0);
+  return capacity - sorted[0].capacity >= guests || capacity - sorted.at(-1).capacity >= guests;
+}
+
+/**
+ * Best adjacent group for the party: fewest tables that seat everyone (up to 6 seats),
+ * then closest to the view. Uses real capacities, so 4-seat tables seat a party of 4 alone.
+ */
 export function bestTableGroup(bookingArea, available, guests) {
   const byNumber = new Map();
   for (const table of available) if (!byNumber.has(tableNumberValue(table))) byNumber.set(tableNumberValue(table), table);
-  if (bookingArea === 'VERONA' && guests >= 3 && guests <= 4) {
-    for (const start of [11, 13, 15]) if (byNumber.has(start) && byNumber.has(start + 1)) return [byNumber.get(start), byNumber.get(start + 1)];
+  const fits = group => {
+    const capacity = group.reduce((sum, table) => sum + table.capacity, 0);
+    return capacity >= guests && capacity <= MAX_SELECTED_CAPACITY && !hasSpareTable(group, guests);
+  };
+  if (bookingArea === 'VERONA' && guests >= 3) {
+    for (const start of [11, 13, 15]) {
+      const pair = [byNumber.get(start), byNumber.get(start + 1)];
+      if (pair.every(Boolean) && fits(pair)) return pair;
+    }
   }
-  const count = guests <= 2 ? 1 : Math.ceil(guests / 2);
+  // Fewest empty seats first (keep 4-seat tables for bigger parties), then closest to the view.
   const viewScore = group => {
     const center = group.reduce((sum, table) => sum + tableNumberValue(table), 0) / group.length;
-    return bookingArea === 'VERONA' ? Math.min(Math.abs(center - 10), Math.abs(center - 11)) : Math.abs(center - 6.5);
+    const spare = group.reduce((sum, table) => sum + table.capacity, 0) - guests;
+    return spare * 100 + (bookingArea === 'VERONA' ? Math.min(Math.abs(center - 10), Math.abs(center - 11)) : Math.abs(center - 6.5));
   };
-  let best = [];
-  let bestScore = Infinity;
-  for (const start of byNumber.keys()) {
-    const forbiddenTerrace = bookingArea === 'TERRACE' && count > 1 && start <= 6 && start + count - 1 >= 7;
-    const group = [];
-    for (let offset = 0; offset < count; offset++) {
-      const table = byNumber.get(start + offset);
-      if (!table || forbiddenTerrace || (bookingArea === 'VERONA' && start + offset >= 11)) break;
-      group.push(table);
+  for (let count = 1; count <= MAX_SELECTED_TABLES; count++) {
+    if (guests <= 2 && count > 1) break;
+    let best = [];
+    let bestScore = Infinity;
+    for (const start of byNumber.keys()) {
+      if (count > 1 && bookingArea === 'TERRACE' && start <= 6 && start + count - 1 >= 7) continue;
+      const group = [];
+      for (let offset = 0; offset < count; offset++) {
+        const table = byNumber.get(start + offset);
+        // Verona 11-16 are only bookable as the fixed pairs above.
+        if (!table || (bookingArea === 'VERONA' && start + offset >= 11)) break;
+        group.push(table);
+      }
+      if (group.length === count && fits(group) && viewScore(group) < bestScore) { best = group; bestScore = viewScore(group); }
     }
-    if (group.length === count && viewScore(group) < bestScore) { best = group; bestScore = viewScore(group); }
+    if (best.length) return best;
   }
-  return best;
+  return [];
 }
 
 export const hashOtp = otp => createHash('sha256').update(otp, 'utf8').digest('hex');

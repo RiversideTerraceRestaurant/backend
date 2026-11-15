@@ -14,6 +14,7 @@ import { answerRestaurant, createKnowledgeStore, knowledgeUpdateSchema } from '.
 import { createReservations } from './reservations.js';
 import { createMailer } from './mailer.js';
 import { handleAdminReservations, handlePublicReservations } from './reservation-routes.js';
+import { answerAvailability, detectLanguage, isBookingQuestion } from './booking-assistant.js';
 
 export async function readBody(req, limit = 65536, raw = false) {
   const buffer = await new Promise((resolve, reject) => {
@@ -155,8 +156,15 @@ export function createApp(config, dependencies = {}) {
         limit(`chat:${ip}`, 10);
         limit(`chat-hour:${ip}`, 40, 3600000);
         const input = chatSchema.parse(await readBody(req));
-        if (input.action === 'chat') useAIQuota();
         const requestId = randomUUID();
+        // Table availability is answered from live booking data, without the LLM or AI quota.
+        const question = input.messages.at(-1).content;
+        if (reservations.configured && (input.action === 'availability' || (input.action === 'chat' && isBookingQuestion(question)))) {
+          const language = input.action === 'availability' ? input.language : detectLanguage(question, input.language);
+          const answer = await answerAvailability({ text: input.action === 'chat' ? question : '', request: input.booking || {}, language, reservations, timeZone: config.timeZone });
+          return send(res, { ...answer, conversationId: input.conversationId, requestId });
+        }
+        if (input.action === 'chat') useAIQuota();
         const previous = conversations.read(input.conversationId, input.messages);
         let state = previous;
         const answer = await recommend({

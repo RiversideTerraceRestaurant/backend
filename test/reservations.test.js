@@ -211,3 +211,15 @@ test('guests get one booking per table per day; admins only need non-overlapping
   assert.equal(tables.find(item => item.id === 4).status, 'RESERVED');
   await assert.rejects(reservations.requestOtp({ ...guest, startTime: '22:00', endTime: '23:00', tableIds: [4] }), error => error.code === 'TABLE_NOT_AVAILABLE');
 });
+
+test('joining and suggestions use real table capacities', () => {
+  // Sorrento: S2, S4, S5, S6 seat four.
+  const sorrento = [1, 2, 3, 4, 5, 6].map(number => table(200 + number, `S${number}`, 'SORRENTO', { capacity: [2, 4, 5, 6].includes(number) ? 4 : 2 }));
+  assert.doesNotThrow(() => validateTablesForBooking([sorrento[4]], 'SORRENTO', 4));
+  assert.throws(() => validateTablesForBooking([sorrento[4], sorrento[5]], 'SORRENTO', 4), /combined capacity|required number/);
+  assert.doesNotThrow(() => validateTablesForBooking([sorrento[0], sorrento[1]], 'SORRENTO', 6));
+  assert.deepEqual(bestTableGroup('SORRENTO', sorrento, 4).map(item => item.tableNumber), ['S6']);
+  assert.deepEqual(bestTableGroup('SORRENTO', sorrento, 6).map(item => item.tableNumber), ['S3', 'S4']);
+  // A couple gets a 2-seat table, not a 4-seat one.
+  assert.deepEqual(bestTableGroup('SORRENTO', sorrento, 2).map(item => item.tableNumber), ['S3']);
+});

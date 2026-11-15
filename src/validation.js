@@ -23,8 +23,15 @@ export const languageSchema = z.enum(['en', 'vi', 'ko', 'ja', 'cn', 'ru', 'kz', 
 export const chatSchema = z.object({
   conversationId: z.string().uuid().optional(),
   context: z.enum(['home', 'menu']).default('menu'),
-  action: z.enum(['chat', 'suggest', 'popular', 'vegetarian', 'mild']).default('chat'),
+  action: z.enum(['chat', 'suggest', 'popular', 'vegetarian', 'mild', 'availability']).default('chat'),
   language: languageSchema.default('en'),
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().trim().min(1).max(1000) })).min(1).max(12),
   preferences: preferencesSchema.default({}),
+  // Structured table-availability request from the chat's quick form.
+  booking: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+    guests: z.number().int().min(1).max(50).optional(),
+    seating: z.enum(['inside', 'outside']).optional(),
+  }).optional(),
 }).refine(value => value.messages.at(-1)?.role === 'user', 'The last message must be from the guest.');
