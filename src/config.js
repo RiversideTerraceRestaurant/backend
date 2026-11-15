@@ -16,6 +16,8 @@ export function loadConfig(env = process.env) {
     // Reservations: server-only key; never expose it to the frontend.
     supabaseServiceKey: env.SUPABASE_SERVICE_ROLE_KEY || '',
     timeZone: env.RESTAURANT_TIMEZONE || 'Asia/Ho_Chi_Minh',
+    // Web push for admin booking alerts. Generate once: npx web-push generate-vapid-keys
+    push: { publicKey: env.VAPID_PUBLIC_KEY || '', privateKey: env.VAPID_PRIVATE_KEY || '', subject: env.VAPID_SUBJECT || 'mailto:admin@riversideterrace.vn' },
     mail: {
       host: env.MAIL_HOST || '', port: Number(env.MAIL_PORT || 587), secure: env.MAIL_SECURE === 'true',
       user: env.MAIL_USERNAME || '', password: env.MAIL_PASSWORD || '', from: env.MAIL_FROM || '',

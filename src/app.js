@@ -15,6 +15,7 @@ import { createReservations } from './reservations.js';
 import { createMailer } from './mailer.js';
 import { handleAdminReservations, handlePublicReservations } from './reservation-routes.js';
 import { answerAvailability, detectLanguage, isBookingQuestion } from './booking-assistant.js';
+import { createPush, endpointSchema, subscriptionSchema } from './push.js';
 
 export async function readBody(req, limit = 65536, raw = false) {
   const buffer = await new Promise((resolve, reject) => {
@@ -59,9 +60,13 @@ export function createApp(config, dependencies = {}) {
   const ai = dependencies.ai || createAI(config, fetch, { onDiagnostic: dependencies.onAIDiagnostic || (entry => console.info(JSON.stringify(entry))) });
   const knowledge = dependencies.knowledge || createKnowledgeStore(config.knowledgePath);
   // Reservations need the service-role key: guests must not read other guests' bookings through RLS.
-  const reservations = dependencies.reservations || createReservations({
-    db: config.supabaseServiceKey ? createClient(config.supabaseUrl, config.supabaseServiceKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }) : null,
-    mailer: createMailer(config), timeZone: config.timeZone,
+  const serviceDb = config.supabaseServiceKey ? createClient(config.supabaseUrl, config.supabaseServiceKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }) : null;
+  const reservations = dependencies.reservations || createReservations({ db: serviceDb, mailer: createMailer(config), timeZone: config.timeZone });
+  const push = dependencies.push || createPush({ db: serviceDb, ...config.push });
+  // Alert admins' devices when a guest confirms a booking request.
+  reservations.events?.on('booking.changed', ({ bookingId, newCustomerBooking }) => {
+    if (!newCustomerBooking || !push.configured) return;
+    reservations.booking(bookingId).then(push.notifyNewBooking).catch(error => console.warn(JSON.stringify({ event: 'push.notify_failed', error: error.message })));
   });
   const conversations = createConversationCache();
   const retriever = createMenuRetriever();
@@ -204,6 +209,10 @@ export function createApp(config, dependencies = {}) {
       if (!path.startsWith('/api/admin/')) throw new HttpError(404, 'API route not found.');
       const { client, user } = await auth.admin(req, res);
       if (await handleAdminReservations({ req, res, method, path, url, send, readBody, service: reservations })) return;
+      if (method === 'GET' && path === '/api/admin/push/config') return send(res, await push.config());
+      if (method === 'POST' && path === '/api/admin/push/subscriptions') return send(res, await push.subscribe(subscriptionSchema.parse(await readBody(req, 8192)), { userId: user.id, userAgent: req.headers['user-agent'] }), 201);
+      if (method === 'DELETE' && path === '/api/admin/push/subscriptions') return send(res, await push.unsubscribe(endpointSchema.parse(await readBody(req, 8192))));
+      if (method === 'POST' && path === '/api/admin/push/test') { limit(`push-test:${user.id}`, 5); return send(res, await push.test()); }
       if (method === 'GET' && path === '/api/admin/knowledge') return send(res, await knowledge.read());
       if (method === 'PATCH' && path === '/api/admin/knowledge') {
         const body = knowledgeUpdateSchema.parse(await readBody(req, 160000));
