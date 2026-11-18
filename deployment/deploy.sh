@@ -8,6 +8,9 @@ revision=${1:?Commit SHA required}
 artifact=${2:?Path to the built jar required}
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || exit 1
 [[ -s "$artifact" ]] || { echo "Missing jar: $artifact" >&2; exit 1; }
+# Processes started by a GitHub Actions job inherit RUNNER_TRACKING_ID and are killed as
+# orphans when the job ends; the PM2-managed API must not be tied to the deploy job.
+unset RUNNER_TRACKING_ID
 mkdir -p "$HOME/.cache"
 exec 9>"$HOME/.cache/rtr-backend-deploy.lock"
 flock -w 300 9
