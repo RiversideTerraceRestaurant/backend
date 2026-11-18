@@ -1,33 +1,73 @@
 # Menu Maestro Backend
 
-Node.js API with Supabase, Groq/Gemini and image processing.
-Requires Node.js 22.12+.
+Spring Boot 4 (Java 21) monolith for the Riverside Terrace website: public menu, RTR AI
+chat (Groq/Gemini), knowledge base, table reservations with email OTP, admin tools,
+web-push alerts and image processing. Data lives in Supabase (PostgREST, Auth, Storage),
+accessed over the same REST APIs and row-level security as before.
+
+## Structure
+
+```
+src/main/java/com/menumaestro/backend/
+  MenuMaestroApplication   entry point (loads ./.env like `node --env-file`)
+  config/        AppConfig (environment variables), bean wiring, MVC config
+  common/        JSON helpers with JavaScript semantics, zod-compatible validation, web layer
+                 (gateway filter: CORS/origin, security headers, rate limits, error bodies)
+  supabase/      PostgREST query builder, GoTrue auth and Storage clients
+  auth/          encrypted session cookie, admin guard, /api/auth
+  ai/            Groq/Gemini JSON client with model failover and cooldowns
+  menu/          catalog snapshot cache, public menu and admin menu APIs, images, maintenance jobs
+  chat/          /api/chat: intent evidence, query compiler, retrieval, recommendations, booking assistant
+  knowledge/     knowledge document store, restaurant answers, contact migration
+  reservation/   booking rules and service, guest and admin APIs, SSE booking events
+  mail/          booking email templates and SMTP sender
+  push/          VAPID web push (RFC 8291/8292) and admin subscription API
+```
+
+All endpoints, request validation messages, response JSON (field order included) and
+status codes match the previous Node.js API, so the frontend needs no changes.
 
 ## Local
 
-Run `npm ci`, create your own `.env`, then `npm run dev`.
+Requires JDK 21+ and Maven. Create `.env` (see `.env.example`), then:
+
+```
+mvn spring-boot:run          # or: mvn package && java -jar target/menu-maestro-backend.jar
+```
+
 API: http://localhost:3001. Health: `/api/health`.
 
 Required: `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
 AI: `GROQ_API_KEY` and/or `GEMINI_API_KEY`.
 Optional: `PORT` (3001), `FRONTEND_ORIGIN` (http://localhost:8080),
-`SESSION_SECRET`, `GROQ_MODEL`, `GEMINI_MODEL`, `AI_DAILY_LIMIT`, `KNOWLEDGE_BASE_PATH`.
+`SESSION_SECRET`, `GROQ_MODEL`, `GEMINI_MODEL`, `AI_DAILY_LIMIT`, `KNOWLEDGE_BASE_PATH`, `TRUST_PROXY`.
 Reservations: `SUPABASE_SERVICE_ROLE_KEY` (server only), SMTP `MAIL_HOST`,
 `MAIL_PORT`, `MAIL_SECURE`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, and
-optional `RESTAURANT_TIMEZONE` (Asia/Ho_Chi_Minh). Admin booking updates stream
-over SSE from one process, so keep a single backend instance.
-Environment files are excluded from Git.
+optional `RESTAURANT_TIMEZONE` (Asia/Ho_Chi_Minh). Push: `VAPID_PUBLIC_KEY`,
+`VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`. `NODE_ENV=production` still selects production mode
+(secure `__Host-` cookie, mandatory `SESSION_SECRET`, SMTP required for online booking).
+Variables in the real environment override `./.env`. Environment files are excluded from Git.
+
+Admin booking updates stream over SSE from one process, and chat context, rate counters
+and maintenance jobs live in memory, so keep a single backend instance.
+
+Admin session cookies use the same AES-256-GCM format as the Node.js API: with an
+unchanged `SESSION_SECRET`, signed-in admins stay signed in after the migration.
+
+HEIC/AVIF uploads are decoded with libheif's `heif-dec`/`heif-convert` when installed
+(`libheif-examples`); JPEG, PNG, WebP, GIF, BMP and TIFF work out of the box. WebP encoding
+uses the bundled libwebp for Linux x64.
 
 ## EC2 / Production
 
-Run `npm ci` and `npm start` under a process manager. Set `NODE_ENV=production`,
-a stable `SESSION_SECRET` of at least 32 characters, and `FRONTEND_ORIGIN`
-to the frontend HTTPS origin. Serve the API through Nginx with HTTPS.
-Only set `TRUST_PROXY=true` when the trusted proxy overwrites X-Forwarded-For.
+The app runs as PM2 process `rtr-backend` via `deployment/run.sh`, from
+`/home/ubuntu/apps/backend` so `.env` and `knowledge/restaurant.md` resolve as before.
+Serve the API through Nginx with HTTPS. Only set `TRUST_PROXY=true` when the trusted proxy
+overwrites X-Forwarded-For.
 
 Set `KNOWLEDGE_BASE_PATH` to a persistent writable file and seed it from
-`knowledge/restaurant.md`. Back up this file. Chat context, rate counters
-and maintenance jobs currently live in RAM; use a single backend instance.
+`knowledge/restaurant.md`. Back up this file. The approved restaurant contact facts are
+applied to it once at startup (marker file `<path>.contact-v1.done`).
 
 Migrations are in `supabase/migrations`; apply them to the intended project.
 The deployment directory contains a combined frontend/backend Nginx example;
@@ -35,42 +75,28 @@ adapt it for an API-only host.
 
 ## Checks
 
-`npm test`, `npm run lint`.
+`mvn verify` compiles and runs the JUnit suite (pure business rules, zod-compatible
+validation messages, session-cookie compatibility, web-push encryption, HTTP contract).
 
-## GitHub Actions
+## GitHub Actions and automatic EC2 deployment
 
-The CI workflow runs on every push, on pull requests targeting `main`, and
-manually from the repository's Actions tab. It uses Node.js 24 and installs
-locked dependencies with `npm ci`. No production secrets are required.
+The CI workflow runs on every push, on pull requests targeting `main`, and manually.
+The `checks` job builds with Temurin 21 on GitHub-hosted Ubuntu, runs the tests and uploads
+the jar. No production secrets are required. Pushes to `main` (and manual runs on `main`)
+then deploy; pull requests only run checks. Runs on `main` are serialized.
 
-Checks: JavaScript syntax and the Node.js test suite. Tests use mocks and local
-fixtures; they do not require production Supabase or AI credentials. After checks pass on `main`, the workflow deploys the API to EC2.
-Database migrations are not run automatically.
+Only the deploy job runs on the repository's EC2 runner (`rtr-ec2-backend`, label
+`rtr-production`), as user `ubuntu`, installed as a systemd service under
+`/home/ubuntu/actions-runner-backend`. It connects outbound to GitHub over HTTPS; no inbound
+SSH is needed. Production application secrets stay on EC2.
 
-## Automatic EC2 deployment
-
-Pushes to `main` deploy after CI succeeds. Pull requests only run checks.
-Manual runs on `main` also deploy. Runs on `main` are serialized so a newer
-push does not interrupt an active deployment.
-
-Checks run on GitHub-hosted Ubuntu runners. Only the deploy job runs on the
-repository's EC2 runner (`rtr-ec2-backend`, label `rtr-production`), as user
-`ubuntu`. The runner is installed as a systemd service under
-`/home/ubuntu/actions-runner-backend`. It connects outbound to GitHub over
-HTTPS; deployment does not require inbound SSH from GitHub or SSH secrets.
-Production application secrets stay on EC2. Do not move pull request jobs onto
-the production runner.
-
-If deployment stays queued, check the runner under repository Settings →
-Actions → Runners and inspect the `actions.runner.*` systemd service on EC2.
-
-`deployment/deploy.sh` fetches and checks out the exact checked commit in
-`/home/ubuntu/apps/backend`, installs production dependencies under Node.js 24,
-restarts PM2 process `rtr-backend`, and checks `/api/health`. A failed deploy
-attempts to restore the previous commit, dependencies and process. Local
-changes to tracked server files stop deployment. `.env` and persistent files
-under `/home/ubuntu/app-data` are preserved. Code runs from a detached commit;
-use `git log -1` to inspect the deployed revision.
+`deployment/deploy.sh` installs a Temurin 21 JRE under `~/.local/share/rtr-java` if missing
+(checksum-verified, no sudo), checks out the exact commit in `/home/ubuntu/apps/backend`,
+stores the jar in `/home/ubuntu/apps/backend-releases/<sha>.jar` (`current.jar` symlink, five
+releases kept), restarts PM2 process `rtr-backend` and checks `/api/health`. A failed deploy
+restores the previous commit and process (including the former Node.js process). Local
+changes to tracked server files stop deployment. `.env` and persistent files under
+`/home/ubuntu/app-data` are preserved. Use `git log -1` to inspect the deployed revision.
 
 ## Chat context
 
