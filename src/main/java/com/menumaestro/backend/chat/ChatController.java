@@ -1,5 +1,6 @@
 package com.menumaestro.backend.chat;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -20,13 +21,13 @@ import com.menumaestro.backend.knowledge.RestaurantAssistant;
 import com.menumaestro.backend.menu.AiQuota;
 import com.menumaestro.backend.menu.CatalogService;
 import com.menumaestro.backend.menu.MenuSchemas;
-import com.menumaestro.backend.reservation.ReservationService;
+import com.menumaestro.backend.reservation.ReservationRules;
 
 import jakarta.servlet.http.HttpServletRequest;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
-/** POST /api/chat: RTR AI (menu recommendations, restaurant facts and table availability). */
+/** POST /api/chat: RTR AI (menu recommendations, restaurant facts and how to book a table). */
 @RestController
 public class ChatController {
   private static final Logger log = LoggerFactory.getLogger(ChatController.class);
@@ -36,20 +37,18 @@ public class ChatController {
   private final AiQuota quota;
   private final CatalogService catalog;
   private final KnowledgeStore knowledge;
-  private final ReservationService reservations;
   private final MenuRetriever retriever;
   private final ConversationCache conversations;
   private final RateLimiter limiter;
   private final ClientIp clientIp;
 
-  public ChatController(AppConfig config, AiClient ai, AiQuota quota, CatalogService catalog, KnowledgeStore knowledge, ReservationService reservations,
+  public ChatController(AppConfig config, AiClient ai, AiQuota quota, CatalogService catalog, KnowledgeStore knowledge,
                         MenuRetriever retriever, ConversationCache conversations, RateLimiter limiter, ClientIp clientIp) {
     this.config = config;
     this.ai = ai;
     this.quota = quota;
     this.catalog = catalog;
     this.knowledge = knowledge;
-    this.reservations = reservations;
     this.retriever = retriever;
     this.conversations = conversations;
     this.limiter = limiter;
@@ -67,11 +66,12 @@ public class ChatController {
     String question = Json.str(messages.get(messages.size() - 1), "content");
     String action = Json.str(input, "action");
     String conversationId = Json.str(input, "conversationId");
-    // Table availability is answered from live booking data, without the LLM or AI quota.
-    if (reservations.configured() && ("availability".equals(action) || ("chat".equals(action) && BookingAssistant.isBookingQuestion(question)))) {
+    // Booking questions get a fixed answer (no LLM, no AI quota, no availability check): a link to the
+    // booking page for up to six guests, the restaurant's WhatsApp/email for larger groups.
+    if ("availability".equals(action) || ("chat".equals(action) && BookingAssistant.isBookingQuestion(question))) {
       String language = "availability".equals(action) ? Json.str(input, "language") : BookingAssistant.detectLanguage(question, Json.str(input, "language"));
-      ObjectNode answer = BookingAssistant.answerAvailability("chat".equals(action) ? question : "", input.has("booking") ? input.get("booking") : Json.obj(),
-        language, reservations, config.timeZone());
+      ObjectNode answer = BookingAssistant.answerBooking("chat".equals(action) ? question : "", input.has("booking") ? input.get("booking") : Json.obj(),
+        language, ReservationRules.restaurantNow(config.timeZone(), Instant.now()).date());
       if (conversationId != null) answer.put("conversationId", conversationId);
       answer.put("requestId", requestId);
       return Responses.ok(answer);

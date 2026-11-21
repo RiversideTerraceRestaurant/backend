@@ -1,5 +1,11 @@
 package com.menumaestro.backend.chat;
 
+import com.menumaestro.backend.common.json.Json;
+
+import tools.jackson.databind.node.ObjectNode;
+
+import tools.jackson.databind.JsonNode;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -76,5 +82,35 @@ class BookingAssistantTest {
     assertEquals("kz", BookingAssistant.detectLanguage("үстел", "en"));
     assertEquals("ru", BookingAssistant.detectLanguage("Столик", "en"));
     assertEquals("fr", BookingAssistant.detectLanguage("une table", "fr"));
+  }
+
+  @Test
+  void smallPartiesGetABookingLinkWithoutAnAvailabilityCheck() {
+    ObjectNode answer = BookingAssistant.answerBooking("đặt bàn cho 4 người tối mai 7h", Json.obj(), "vi", "2026-11-21");
+    JsonNode booking = answer.get("booking");
+    assertEquals("online", Json.str(booking, "kind"));
+    assertEquals(4, booking.get("guests").asInt());
+    assertEquals("2026-11-22", Json.str(booking.get("query"), "date"));
+    assertEquals("19:00", Json.str(booking.get("query"), "time"));
+    assertTrue(Json.str(answer, "reply").contains("đặt bàn online"));
+    assertFalse(Json.str(answer, "reply").contains("WhatsApp"));
+  }
+
+  @Test
+  void unknownPartySizeMentionsBothRoutes() {
+    ObjectNode answer = BookingAssistant.answerBooking("", Json.obj(), "en", "2026-11-21");
+    assertEquals("online", Json.str(answer.get("booking"), "kind"));
+    assertFalse(answer.get("booking").has("guests"));
+    assertTrue(Json.str(answer, "reply").contains("WhatsApp"));
+  }
+
+  @Test
+  void largePartiesAreSentToWhatsAppOrEmail() {
+    ObjectNode answer = BookingAssistant.answerBooking("table for 10 people tomorrow", Json.obj(), "en", "2026-11-21");
+    JsonNode booking = answer.get("booking");
+    assertEquals("contact", Json.str(booking, "kind"));
+    assertEquals("https://wa.me/84911500440", Json.str(booking, "whatsapp"));
+    assertEquals("litalianoriverside@gmail.com", Json.str(booking, "email"));
+    assertFalse(booking.has("query"));
   }
 }

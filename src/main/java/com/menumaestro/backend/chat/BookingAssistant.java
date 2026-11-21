@@ -1,27 +1,22 @@
 package com.menumaestro.backend.chat;
 
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import com.menumaestro.backend.common.json.Js;
 import com.menumaestro.backend.common.json.Json;
 import com.menumaestro.backend.reservation.ReservationRules;
-import com.menumaestro.backend.reservation.ReservationService;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * Chat assistant for table availability (booking-assistant.js). Parses natural-language
- * requests ("bàn cho 4 người tối mai 7h", "table for 2 tomorrow at 7pm") and answers from
- * live reservation data. Deterministic: it never invents availability.
+ * Chat assistant for booking questions. Parses natural-language requests ("bàn cho 4 người tối
+ * mai 7h", "table for 2 tomorrow at 7pm") only to pre-fill the booking link and to tell parties
+ * over the online limit to contact the restaurant. It never checks or invents availability.
  */
 public final class BookingAssistant {
   private BookingAssistant() {}
@@ -29,7 +24,6 @@ public final class BookingAssistant {
   public static final String FIRST_SLOT = "11:00";
   public static final String LAST_SLOT = "21:30";
   public static final int DEFAULT_DURATION_MINUTES = 120;
-  private static final String DEFAULT_TIME = "19:00";
 
   static int toMinutes(String time) { return Integer.parseInt(time.substring(0, 2)) * 60 + Integer.parseInt(time.substring(3, 5)); }
 
@@ -171,91 +165,46 @@ public final class BookingAssistant {
   }
 
   // ---------- localized copy ----------
-  private record Copy(BiFunction<String, Integer, String> available, Function<Object[], String> line, BiFunction<String, Integer, String> none,
-                      Function<String, String> next, Function<Integer, String> large, Function<List<String>, String> assumed,
-                      Function<Integer, String> guests, Function<String, String> time, String today, String moved, String cta) {}
+  public static final String PHONE_DISPLAY = "(+84) 911 500 440";
+  public static final String WHATSAPP_URL = "https://wa.me/84911500440";
+  public static final String PHONE_URL = "tel:+84911500440";
+  public static final String EMAIL = "litalianoriverside@gmail.com";
 
+  /** online: how to book on the site; groups: the rule for larger parties; large: reply to a party over the limit. */
+  private record Copy(Function<Integer, String> online, String groups, Function<Integer, String> large) {}
+
+  private static final String CONTACT = "WhatsApp " + PHONE_DISPLAY + " / " + EMAIL;
   private static final Map<String, Copy> COPY = Map.of(
-    "en", new Copy((when, g) -> "Good news — there are tables for " + g + " on " + when + ":",
-      l -> "• " + l[0] + ": " + l[1] + " free table" + (((Integer) l[1]) == 1 ? "" : "s") + " — suggested " + l[2],
-      (when, g) -> "Sorry, online booking has no suitable tables for " + g + " on " + when + ".",
-      when -> "The next day with free tables is " + when + ".",
-      max -> "Online booking takes up to " + max + " guests. For larger groups please call (+84) 911 500 440 or email litalianoriverside@gmail.com.",
-      parts -> "(I assumed " + String.join(", ", parts) + " — tell me if you'd like something else.)",
-      g -> g + " guests", t -> t, "today", "That time has passed, so I checked the next available slot.",
-      "Tap a suggestion to reserve. Your table is held once you confirm the code sent to your email; the restaurant then approves it."),
-    "vi", new Copy((when, g) -> "Tin vui — vẫn còn bàn cho " + g + " khách vào " + when + ":",
-      l -> "• " + l[0] + ": còn " + l[1] + " bàn — gợi ý " + l[2],
-      (when, g) -> "Rất tiếc, " + when + " không còn bàn phù hợp cho " + g + " khách để đặt online.",
-      when -> "Ngày gần nhất còn bàn là " + when + ".",
-      max -> "Đặt bàn online nhận tối đa " + max + " khách. Nhóm đông hơn vui lòng gọi (+84) 911 500 440 hoặc email litalianoriverside@gmail.com.",
-      parts -> "(Mình tạm hiểu là " + String.join(", ", parts) + " — bạn muốn khác thì cứ nhắn nhé.)",
-      g -> g + " khách", t -> "lúc " + t, "hôm nay", "Giờ bạn chọn đã qua nên mình kiểm tra khung giờ gần nhất.",
-      "Chọn một gợi ý để đặt. Bàn được giữ sau khi bạn xác nhận mã gửi qua email, sau đó nhà hàng sẽ duyệt."),
-    "ko", new Copy((when, g) -> when + "에 " + g + "명 자리가 있습니다:",
-      l -> "• " + l[0] + ": 빈 테이블 " + l[1] + "개 — 추천 " + l[2],
-      (when, g) -> "죄송합니다. " + when + "에는 " + g + "명이 온라인으로 예약할 수 있는 테이블이 없습니다.",
-      when -> "가장 가까운 예약 가능일은 " + when + "입니다.",
-      max -> "온라인 예약은 최대 " + max + "명까지 가능합니다. 단체는 (+84) 911 500 440으로 연락해 주세요.",
-      parts -> "(" + String.join(", ", parts) + "(으)로 확인했습니다.)",
-      g -> g + "명", t -> t, "오늘", "선택한 시간이 지나 가장 가까운 시간으로 확인했습니다.",
-      "추천을 눌러 예약하세요. 이메일 인증 후 테이블이 확보되고 레스토랑이 승인합니다."),
-    "ja", new Copy((when, g) -> when + "、" + g + "名様のお席がございます：",
-      l -> "• " + l[0] + "：空き" + l[1] + "卓 — おすすめ " + l[2],
-      (when, g) -> "申し訳ありません。" + when + "は" + g + "名様のオンライン予約可能なお席がありません。",
-      when -> "最も近い空きのある日は" + when + "です。",
-      max -> "オンライン予約は" + max + "名様までです。大人数の場合は (+84) 911 500 440 へお電話ください。",
-      parts -> "（" + String.join("、", parts) + "で確認しました）",
-      g -> g + "名", t -> t, "本日", "ご指定の時間を過ぎているため、直近の時間で確認しました。",
-      "候補をタップしてご予約ください。メール認証後にお席を確保し、店舗が承認します。"),
-    "cn", new Copy((when, g) -> "好消息，" + when + "有适合" + g + "位的座位：",
-      l -> "• " + l[0] + "：空桌" + l[1] + "张 — 推荐 " + l[2],
-      (when, g) -> "抱歉，" + when + "没有适合" + g + "位的在线可订座位。",
-      when -> "最近有空位的日期是" + when + "。",
-      max -> "在线订位最多" + max + "位。更多人数请致电 (+84) 911 500 440。",
-      parts -> "（已按" + String.join("、", parts) + "查询）",
-      g -> g + "位", t -> t, "今天", "所选时间已过，已为您查询最近的时段。",
-      "点击推荐即可预订。邮箱验证后为您保留座位，餐厅确认后生效。"),
-    "ru", new Copy((when, g) -> "Есть свободные столики на " + g + " — " + when + ":",
-      l -> "• " + l[0] + ": свободно " + l[1] + " — рекомендуем " + l[2],
-      (when, g) -> "К сожалению, на " + when + " нет подходящих столиков на " + g + " для онлайн-брони.",
-      when -> "Ближайшая дата со свободными столиками: " + when + ".",
-      max -> "Онлайн-бронь — до " + max + " гостей. Для больших компаний звоните (+84) 911 500 440.",
-      parts -> "(Проверил для: " + String.join(", ", parts) + ".)",
-      g -> g + " гост.", t -> t, "сегодня", "Это время уже прошло, я проверил ближайшее.",
-      "Нажмите на вариант, чтобы забронировать. Столик закрепляется после подтверждения кода из письма."),
-    "kz", new Copy((when, g) -> when + " уақытына " + g + " қонаққа бос үстелдер бар:",
-      l -> "• " + l[0] + ": бос " + l[1] + " үстел — ұсыныс " + l[2],
-      (when, g) -> "Кешіріңіз, " + when + " уақытына " + g + " қонаққа онлайн бос үстел жоқ.",
-      when -> "Бос үстелі бар ең жақын күн: " + when + ".",
-      max -> "Онлайн брондау " + max + " қонаққа дейін. Үлкен топтар үшін (+84) 911 500 440 нөміріне хабарласыңыз.",
-      parts -> "(" + String.join(", ", parts) + " бойынша тексердім.)",
-      g -> g + " қонақ", t -> t, "бүгін", "Таңдалған уақыт өтіп кетті, ең жақын уақытты тексердім.",
-      "Брондау үшін ұсынысты басыңыз. Электрондық поштадағы кодты растағаннан кейін үстел сақталады."),
-    "es", new Copy((when, g) -> "Hay mesas para " + g + " el " + when + ":",
-      l -> "• " + l[0] + ": " + l[1] + " libres — sugerencia " + l[2],
-      (when, g) -> "Lo sentimos, el " + when + " no hay mesas disponibles online para " + g + ".",
-      when -> "El próximo día con mesas libres es el " + when + ".",
-      max -> "La reserva online admite hasta " + max + " personas. Para grupos mayores llame al (+84) 911 500 440.",
-      parts -> "(He supuesto " + String.join(", ", parts) + ".)",
-      g -> g + " personas", t -> t, "hoy", "Esa hora ya pasó; he consultado el siguiente horario.",
-      "Pulse una sugerencia para reservar. La mesa queda retenida al confirmar el código enviado por email."),
-    "fr", new Copy((when, g) -> "Il reste des tables pour " + g + " le " + when + " :",
-      l -> "• " + l[0] + " : " + l[1] + " libres — suggestion " + l[2],
-      (when, g) -> "Désolé, aucune table disponible en ligne pour " + g + " le " + when + ".",
-      when -> "Le prochain jour avec des tables libres est le " + when + ".",
-      max -> "La réservation en ligne accepte jusqu'à " + max + " personnes. Pour les groupes, appelez le (+84) 911 500 440.",
-      parts -> "(J'ai supposé " + String.join(", ", parts) + ".)",
-      g -> g + " personnes", t -> t, "aujourd'hui", "Cet horaire est passé ; j'ai vérifié le créneau suivant.",
-      "Touchez une suggestion pour réserver. La table est bloquée après confirmation du code reçu par e-mail."),
-    "it", new Copy((when, g) -> "Ci sono tavoli per " + g + " il " + when + ":",
-      l -> "• " + l[0] + ": " + l[1] + " liberi — consigliato " + l[2],
-      (when, g) -> "Spiacenti, il " + when + " non ci sono tavoli prenotabili online per " + g + ".",
-      when -> "Il primo giorno con tavoli liberi è il " + when + ".",
-      max -> "La prenotazione online accetta fino a " + max + " ospiti. Per gruppi chiamate il (+84) 911 500 440.",
-      parts -> "(Ho ipotizzato " + String.join(", ", parts) + ".)",
-      g -> g + " persone", t -> t, "oggi", "L'orario è già passato; ho controllato il primo disponibile.",
-      "Tocca un suggerimento per prenotare. Il tavolo è bloccato dopo la conferma del codice ricevuto via email."));
+    "en", new Copy(max -> "You can book a table online right here (up to " + max + " guests): pick your tables, enter your details and confirm by email. Tap the button below to start.",
+      "For more than 6 guests, please contact us via " + CONTACT + ".",
+      max -> "Online booking is for up to " + max + " guests. For your group, please contact the restaurant via " + CONTACT + " and we will arrange the seating for you."),
+    "vi", new Copy(max -> "Bạn đặt bàn online ngay tại đây nhé (tối đa " + max + " khách): chọn bàn, nhập thông tin và xác nhận qua email. Nhấn nút bên dưới để bắt đầu.",
+      "Nhóm trên 6 khách vui lòng liên hệ nhà hàng qua " + CONTACT + ".",
+      max -> "Đặt bàn online chỉ áp dụng cho nhóm tối đa " + max + " khách. Với nhóm của bạn, vui lòng liên hệ nhà hàng qua " + CONTACT + " để được sắp xếp chỗ ngồi."),
+    "ko", new Copy(max -> "여기에서 바로 온라인 예약하실 수 있어요(최대 " + max + "명): 테이블 선택, 정보 입력 후 이메일로 확인합니다. 아래 버튼을 눌러 시작하세요.",
+      "7명 이상은 " + CONTACT + " 로 문의해 주세요.",
+      max -> "온라인 예약은 최대 " + max + "명까지입니다. 단체는 " + CONTACT + " 로 연락 주시면 자리를 준비해 드립니다."),
+    "ja", new Copy(max -> "こちらからオンライン予約ができます（最大" + max + "名）。席を選び、情報を入力してメールで確認します。下のボタンから始めてください。",
+      "7名以上は " + CONTACT + " までご連絡ください。",
+      max -> "オンライン予約は最大" + max + "名までです。団体のお客様は " + CONTACT + " までご連絡いただければお席をご用意します。"),
+    "cn", new Copy(max -> "您可以在这里在线订位（最多" + max + "人）：选择餐桌、填写信息并通过邮件确认。点击下方按钮开始。",
+      "超过6人请通过 " + CONTACT + " 联系我们。",
+      max -> "在线订位最多支持" + max + "人。团体请通过 " + CONTACT + " 联系餐厅，我们会为您安排座位。"),
+    "ru", new Copy(max -> "Забронировать столик можно онлайн прямо здесь (до " + max + " гостей): выберите столик, введите данные и подтвердите по email. Нажмите кнопку ниже.",
+      "Для групп больше 6 человек свяжитесь с нами: " + CONTACT + ".",
+      max -> "Онлайн-бронирование доступно до " + max + " гостей. Для вашей группы свяжитесь с рестораном: " + CONTACT + " — мы подготовим места."),
+    "kz", new Copy(max -> "Үстелді осы жерден онлайн брондай аласыз (" + max + " қонаққа дейін): үстелді таңдап, деректерді енгізіп, email арқылы растаңыз. Төмендегі батырманы басыңыз.",
+      "6 адамнан көп топтар үшін бізге хабарласыңыз: " + CONTACT + ".",
+      max -> "Онлайн брондау " + max + " қонаққа дейін. Тобыңыз үшін мейрамханаға хабарласыңыз: " + CONTACT + "."),
+    "es", new Copy(max -> "Puedes reservar online aquí mismo (hasta " + max + " personas): elige tu mesa, introduce tus datos y confirma por email. Pulsa el botón de abajo para empezar.",
+      "Para más de 6 personas, contáctanos por " + CONTACT + ".",
+      max -> "La reserva online es para un máximo de " + max + " personas. Para tu grupo, contacta con el restaurante por " + CONTACT + " y te prepararemos las mesas."),
+    "fr", new Copy(max -> "Vous pouvez réserver en ligne ici même (jusqu'à " + max + " personnes) : choisissez votre table, saisissez vos coordonnées et confirmez par email. Touchez le bouton ci-dessous.",
+      "Au-delà de 6 personnes, contactez-nous via " + CONTACT + ".",
+      max -> "La réservation en ligne est limitée à " + max + " personnes. Pour votre groupe, contactez le restaurant via " + CONTACT + " et nous organiserons votre table."),
+    "it", new Copy(max -> "Puoi prenotare online proprio qui (fino a " + max + " persone): scegli il tavolo, inserisci i tuoi dati e conferma via email. Tocca il pulsante qui sotto.",
+      "Per più di 6 persone contattaci via " + CONTACT + ".",
+      max -> "La prenotazione online è per massimo " + max + " persone. Per il tuo gruppo contatta il ristorante via " + CONTACT + " e prepareremo i tavoli."));
 
   /** Picks the reply language from the text itself, falling back to the UI language. */
   public static String detectLanguage(String text, String fallback) {
@@ -302,88 +251,33 @@ public final class BookingAssistant {
   }
 
   /**
-   * Answers an availability question. Guest-facing rule: a table with any booking that
-   * day is shown as taken, the same as the booking page.
+   * Answers a booking question without checking availability: parties of up to six get a link to
+   * the booking page (pre-filled with the date, time and party size the guest mentioned), larger
+   * parties get the restaurant's WhatsApp and email.
    */
-  public static ObjectNode answerAvailability(String text, JsonNode request, String language, ReservationService reservations, String timeZone) {
+  public static ObjectNode answerBooking(String text, JsonNode request, String language, String today) {
     String lang = COPY.containsKey(language) ? language : "en";
     Copy copy = COPY.get(lang);
-    ReservationRules.Now now = ReservationRules.restaurantNow(timeZone, reservations.now());
-    Request parsed = parseBookingRequest(text == null ? "" : text, now.date());
-    // Structured quick-form values override what was parsed from text (empty values are ignored).
+    Request parsed = parseBookingRequest(text == null ? "" : text, today);
     JsonNode requested = Json.get(request, "guests");
-    Request asked = parsed.with(nonEmpty(request, "date"), requested == null || !requested.isNumber() ? null : requested.asInt(),
-      nonEmpty(request, "time"), nonEmpty(request, "seating"));
-    List<String> assumed = new ArrayList<>();
-    Integer requestedGuests = asked.guests();
-    int guests;
-    if (requestedGuests == null || requestedGuests == 0) { guests = 2; assumed.add(copy.guests().apply(2)); }
-    else guests = requestedGuests;
-    if (guests > ReservationRules.MAX_ONLINE_GUESTS) {
-      return Json.obj("reply", copy.large().apply(ReservationRules.MAX_ONLINE_GUESTS), "items", Json.arr(), "mode", "booking", "language", lang, "booking", null);
+    Request asked = parsed.with(nonEmpty(request, "date"), requested == null || !requested.isNumber() ? null : requested.asInt(), nonEmpty(request, "time"), nonEmpty(request, "seating"));
+    Integer guests = asked.guests() == null || asked.guests() <= 0 ? null : asked.guests();
+    int max = ReservationRules.MAX_ONLINE_GUESTS;
+    ObjectNode contact = Json.obj("whatsapp", WHATSAPP_URL, "phone", PHONE_URL, "phoneLabel", PHONE_DISPLAY, "email", EMAIL);
+    if (guests != null && guests > max) {
+      ObjectNode booking = Json.obj("kind", "contact", "guests", guests, "maxOnlineGuests", max);
+      booking.setAll(contact);
+      return Json.obj("reply", copy.large().apply(max), "items", Json.arr(), "mode", "booking", "language", lang, "booking", booking);
     }
-    String date = asked.date() != null && asked.date().compareTo(now.date()) >= 0 ? asked.date() : now.date();
-    String time = asked.time() != null && !asked.time().isEmpty() ? asked.time() : DEFAULT_TIME;
-    if (toMinutes(time) < toMinutes(FIRST_SLOT)) time = FIRST_SLOT;
-    if (toMinutes(time) > toMinutes(LAST_SLOT)) time = LAST_SLOT;
-    boolean moved = false;
-    if (date.equals(now.date()) && time.compareTo(now.time()) <= 0) {
-      String next = nextSlotAfter(now.time());
-      if (next != null) time = next;
-      else {
-        date = addDays(date, 1);
-        time = asked.time() != null && !asked.time().isEmpty() && toMinutes(asked.time()) <= toMinutes(LAST_SLOT) ? asked.time() : DEFAULT_TIME;
-      }
-      moved = true;
-    }
-    if (!moved) {
-      if (asked.time() == null || asked.time().isEmpty()) assumed.add(0, copy.time().apply(time));
-      if (asked.date() == null || asked.date().isEmpty()) assumed.add(0, copy.today());
-    }
-
-    final String slot = time;
-    final int party = guests;
-    Function<String, List<ObjectNode>> optionsOn = day -> {
-      List<String> areas = asked.seating() != null ? ReservationRules.suggestionAreas(asked.seating(), party)
-        : concat(List.of("TERRACE"), ReservationRules.suggestionAreas("inside", party));
-      if (asked.area() != null) areas = List.of(asked.area());
-      if (party <= 2) areas = areas.stream().filter(area -> !"VERONA".equals(area)).toList();
-      LinkedHashSet<String> unique = new LinkedHashSet<>(areas);
-      if (asked.seating() == null && asked.area() == null) unique.add("SORRENTO");
-      List<ObjectNode> options = new ArrayList<>();
-      for (String area : unique) {
-        List<ObjectNode> free = reservations.availability(area, day, slot, endTimeFor(slot)).stream().filter(table -> "AVAILABLE".equals(Json.str(table, "status"))).toList();
-        List<ObjectNode> tables = ReservationRules.bestTableGroup(area, free, party);
-        if (!tables.isEmpty()) {
-          ArrayNode picked = Json.arr();
-          for (ObjectNode table : tables) picked.add(Json.obj("id", table.get("id"), "tableNumber", table.get("tableNumber")));
-          options.add(Json.obj("area", area, "label", ReservationRules.AREA_LABELS.get(area), "freeCount", free.size(), "tables", picked));
-        }
-      }
-      return options;
-    };
-
-    String when = formatDate(lang, date) + " " + time;
-    List<ObjectNode> options = optionsOn.apply(date);
-    List<String> lines = new ArrayList<>();
-    String nextDate = null;
-    if (moved) lines.add(copy.moved());
-    if (!options.isEmpty()) {
-      lines.add(copy.available().apply(when, guests));
-      for (ObjectNode option : options) {
-        List<String> numbers = Json.list(option.get("tables")).stream().map(table -> Json.jsString(table.get("tableNumber"))).toList();
-        lines.add(copy.line().apply(new Object[] {Json.str(option, "label"), option.get("freeCount").asInt(), String.join("+", numbers)}));
-      }
-      lines.add("");
-      lines.add(copy.cta());
-    } else {
-      lines.add(copy.none().apply(when, guests));
-      for (int offset = 1; offset <= 7 && nextDate == null; offset++) if (!optionsOn.apply(addDays(date, offset)).isEmpty()) nextDate = addDays(date, offset);
-      if (nextDate != null) lines.add(copy.next().apply(formatDate(lang, nextDate)));
-    }
-    if (!assumed.isEmpty()) lines.add(copy.assumed().apply(assumed));
-    return Json.obj("reply", String.join("\n", lines), "items", Json.arr(), "mode", "booking", "language", lang,
-      "booking", Json.obj("date", date, "time", time, "endTime", endTimeFor(time), "guests", guests, "seating", asked.seating(), "options", options, "nextDate", nextDate));
+    ObjectNode query = Json.obj();
+    if (asked.date() != null && asked.date().compareTo(today) >= 0) query.put("date", asked.date());
+    if (asked.time() != null && !asked.time().isEmpty()) query.put("time", asked.time());
+    if (guests != null) query.put("guests", guests);
+    if (asked.seating() != null) query.put("seating", asked.seating());
+    String reply = copy.online().apply(max) + (guests == null ? "\n" + copy.groups() : "");
+    ObjectNode booking = Json.obj("kind", "online", "guests", guests == null ? Json.UNDEFINED : guests, "maxOnlineGuests", max, "query", query);
+    booking.setAll(contact);
+    return Json.obj("reply", reply, "items", Json.arr(), "mode", "booking", "language", lang, "booking", booking);
   }
 
   private static String nonEmpty(JsonNode request, String key) {
@@ -391,11 +285,5 @@ public final class BookingAssistant {
     if (value == null || value.isNull()) return null;
     String text = Json.jsString(value);
     return text.isEmpty() ? null : text;
-  }
-
-  private static List<String> concat(List<String> first, List<String> second) {
-    List<String> result = new ArrayList<>(first);
-    result.addAll(second);
-    return result;
   }
 }
