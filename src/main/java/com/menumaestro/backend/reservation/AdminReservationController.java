@@ -18,11 +18,16 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
+import com.menumaestro.backend.auth.AuthService;
 import com.menumaestro.backend.common.json.Json;
 import com.menumaestro.backend.common.validation.Schema;
 import com.menumaestro.backend.common.validation.Z;
+import com.menumaestro.backend.common.web.RateLimiter;
 import com.menumaestro.backend.common.web.RequestBodies;
 import com.menumaestro.backend.common.web.Responses;
+import com.menumaestro.backend.media.CloudinaryClient;
+import com.menumaestro.backend.menu.Async;
+import com.menumaestro.backend.menu.ImageService;
 
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,7 +47,16 @@ public class AdminReservationController {
     return thread;
   });
 
-  public AdminReservationController(ReservationService service) { this.service = service; }
+  private final ImageService images;
+  private final CloudinaryClient cloudinary;
+  private final RateLimiter limiter;
+
+  public AdminReservationController(ReservationService service, ImageService images, CloudinaryClient cloudinary, RateLimiter limiter) {
+    this.service = service;
+    this.images = images;
+    this.cloudinary = cloudinary;
+    this.limiter = limiter;
+  }
 
   private static long id(String value) { return ID.parse(Json.node(value)).asLong(); }
 
@@ -133,6 +147,34 @@ public class AdminReservationController {
   public ResponseEntity<String> updateTable(@PathVariable String id, HttpServletRequest request) {
     long tableId = id(id);
     return Responses.ok(service.updateTable(tableId, ReservationSchemas.TABLE.parse(RequestBodies.json(request))));
+  }
+
+  /** Raw image body (like /api/admin/images): one photo per table, shown to guests as the view from that table. */
+  @PostMapping("/tables/{id}/photo")
+  public ResponseEntity<String> uploadTablePhoto(@PathVariable String id, HttpServletRequest request) {
+    long tableId = id(id);
+    limiter.limit("upload:" + AuthService.currentAdmin(request).userId(), 30);
+    String url = images.uploadTablePhoto(RequestBodies.raw(request, 15 * 1024 * 1024));
+    ReservationService.TablePhotoChange change;
+    try {
+      change = service.setTablePhoto(tableId, url);
+    } catch (RuntimeException error) {
+      cloudinary.destroy(url);
+      throw error;
+    }
+    removeLater(change.previousUrl());
+    return Responses.ok(change.table());
+  }
+
+  @DeleteMapping("/tables/{id}/photo")
+  public ResponseEntity<String> deleteTablePhoto(@PathVariable String id) {
+    ReservationService.TablePhotoChange change = service.setTablePhoto(id(id), null);
+    removeLater(change.previousUrl());
+    return Responses.ok(change.table());
+  }
+
+  private void removeLater(String url) {
+    if (url != null && cloudinary.owns(url)) Async.EXECUTOR.submit(() -> cloudinary.destroy(url));
   }
 
   @DeleteMapping("/tables/{id}")

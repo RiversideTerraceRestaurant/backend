@@ -15,7 +15,12 @@ public record AppConfig(
   String supabaseUrl, String supabaseKey, String sessionSecret,
   String groqKey, String groqModel, String geminiKey, String geminiModel,
   boolean trustProxy, int dailyLimit, String knowledgePath,
-  String supabaseServiceKey, String timeZone, Push push, Mail mail) {
+  String supabaseServiceKey, String timeZone, Push push, Mail mail, Cloudinary cloudinary, String siteUrl) {
+
+  /** Cloudinary account for menu and table photos. Empty values mean "not configured". */
+  public record Cloudinary(String cloudName, String apiKey, String apiSecret) {
+    public boolean configured() { return !cloudName.isEmpty() && !apiKey.isEmpty() && !apiSecret.isEmpty(); }
+  }
 
   public record Push(String publicKey, String privateKey, String subject) {}
 
@@ -35,10 +40,11 @@ public record AppConfig(
       new SecureRandom().nextBytes(random);
       secret = HexFormat.of().formatHex(random);
     }
+    List<String> origins = Arrays.stream(or(env.apply("FRONTEND_ORIGIN"), "http://localhost:8080").split(",")).map(String::trim).toList();
     String groqModel = env.apply("GROQ_MODEL") == null ? "" : env.apply("GROQ_MODEL").trim();
     return new AppConfig(
       (int) number(env.apply("PORT"), 3001), production,
-      Arrays.stream(or(env.apply("FRONTEND_ORIGIN"), "http://localhost:8080").split(",")).map(String::trim).toList(),
+      origins,
       env.apply("SUPABASE_URL"), env.apply("SUPABASE_ANON_KEY"), secret,
       or(env.apply("GROQ_API_KEY"), ""), groqModel.isEmpty() ? "auto" : groqModel,
       or(env.apply("GEMINI_API_KEY"), ""), or(env.apply("GEMINI_MODEL"), "gemini-2.5-flash"),
@@ -47,7 +53,17 @@ public record AppConfig(
       or(env.apply("SUPABASE_SERVICE_ROLE_KEY"), ""), or(env.apply("RESTAURANT_TIMEZONE"), "Asia/Ho_Chi_Minh"),
       new Push(or(env.apply("VAPID_PUBLIC_KEY"), ""), or(env.apply("VAPID_PRIVATE_KEY"), ""), or(env.apply("VAPID_SUBJECT"), "mailto:admin@riversideterrace.vn")),
       new Mail(or(env.apply("MAIL_HOST"), ""), (int) number(env.apply("MAIL_PORT"), 587), "true".equals(env.apply("MAIL_SECURE")),
-        or(env.apply("MAIL_USERNAME"), ""), or(env.apply("MAIL_PASSWORD"), ""), or(env.apply("MAIL_FROM"), "")));
+        or(env.apply("MAIL_USERNAME"), ""), or(env.apply("MAIL_PASSWORD"), ""), or(env.apply("MAIL_FROM"), "")),
+      cloudinary(env), or(env.apply("PUBLIC_SITE_URL"), origins.get(0)).replaceAll("/+$", ""));
+  }
+
+  /** CLOUDINARY_URL (cloudinary://key:secret@cloud) or the three CLOUDINARY_* variables. */
+  public static Cloudinary cloudinary(Function<String, String> env) {
+    String url = or(env.apply("CLOUDINARY_URL"), "");
+    java.util.regex.Matcher match = java.util.regex.Pattern.compile("^cloudinary://([^:]+):([^@]+)@([^/?]+)").matcher(url.trim());
+    if (match.find()) return new Cloudinary(match.group(3), match.group(1), match.group(2));
+    return new Cloudinary(or(env.apply("CLOUDINARY_CLOUD_NAME"), "").trim(), or(env.apply("CLOUDINARY_API_KEY"), "").trim(),
+      or(env.apply("CLOUDINARY_API_SECRET"), "").trim());
   }
 
   private static boolean empty(String value) { return value == null || value.isEmpty(); }

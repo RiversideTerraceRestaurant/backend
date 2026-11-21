@@ -68,7 +68,7 @@ public interface Mailer {
 
       public void send(String kind, JsonNode booking, Map<String, String> extra) throws Exception {
         if (from.isEmpty()) throw new IllegalStateException("Email sender is not configured. Set MAIL_FROM or MAIL_USERNAME.");
-        BookingEmailRenderer.Email email = BookingEmailRenderer.render(kind, booking, extra);
+        BookingEmailRenderer.Email email = BookingEmailRenderer.render(kind, booking, extra, config.siteUrl());
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
         helper.setFrom(from);

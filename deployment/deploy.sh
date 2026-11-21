@@ -115,6 +115,27 @@ rollback() {
 }
 trap rollback ERR
 
+# Settings kept as GitHub Actions secrets/variables are written into the server .env, so they can
+# be rotated without SSH. Empty values leave the existing line untouched.
+upsert_env() {
+  local key=$1 value=${2:-}
+  [[ -n "$value" ]] || return 0
+  [[ "$value" != *$'\n'* ]] || { echo "Refusing multi-line value for $key" >&2; return 1; }
+  touch "$app/.env"
+  chmod 600 "$app/.env"
+  KEY="$key" VALUE="$value" python3 - "$app/.env" <<'PY'
+import os, sys
+path, key, value = sys.argv[1], os.environ["KEY"], os.environ["VALUE"]
+lines = open(path).read().splitlines()
+kept = [line for line in lines if not line.startswith(key + "=")]
+kept.append(f"{key}={value}")
+open(path, "w").write("\n".join(kept) + "\n")
+PY
+  echo "Updated $key in .env"
+}
+upsert_env CLOUDINARY_URL "${CLOUDINARY_URL:-}"
+upsert_env PUBLIC_SITE_URL "${PUBLIC_SITE_URL:-}"
+
 # .env and the persistent knowledge file remain on the server.
 git switch --detach "$revision"
 install -m 644 "$artifact" "$releases/$revision.jar"

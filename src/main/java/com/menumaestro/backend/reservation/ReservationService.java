@@ -430,6 +430,17 @@ public class ReservationService {
     return ReservationRules.toTable(row);
   }
 
+  /** The table after a photo change, plus the photo URL it replaced (for cleanup). */
+  public record TablePhotoChange(ObjectNode table, String previousUrl) {}
+
+  public TablePhotoChange setTablePhoto(long id, String imageUrl) {
+    JsonNode current = unwrapDb(requireDb().from("restaurant_tables").select("id, image_url").eq("id", id).maybeSingle().execute());
+    if (current == null || current.isNull()) throw new ApiException(404, "Table not found.");
+    JsonNode row = unwrapDb(requireDb().from("restaurant_tables").update(Json.obj("image_url", imageUrl)).eq("id", id).select().maybeSingle().execute());
+    if (row == null || row.isNull()) throw new ApiException(404, "Table not found.");
+    return new TablePhotoChange(ReservationRules.toTable(row), Json.str(current, "image_url"));
+  }
+
   public void deleteTable(long id) {
     // Tables are deactivated, never removed, so past bookings keep their table numbers.
     JsonNode row = unwrapDb(requireDb().from("restaurant_tables").update(Json.obj("active", false)).eq("id", id).select("id").maybeSingle().execute());

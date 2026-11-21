@@ -108,6 +108,18 @@ class ReservationRulesTest {
   }
 
   @Test
+  void activeBookingEmailsLinkToTheTablePhotosAndNoShowRule() {
+    ObjectNode booking = Json.obj("bookingCode", "RTR-1", "status", "APPROVED", "area", "TERRACE", "tables", List.of(Json.obj("id", 3, "tableNumber", "T3"), Json.obj("id", 4, "tableNumber", "T4")),
+      "bookingDate", "2026-11-20", "startTime", "18:00", "endTime", "20:00", "numberOfGuests", 4, "customerPhone", "0900", "customerEmail", "a@b.co", "customerName", "A");
+    String approved = BookingEmailRenderer.render("approved", booking, Map.of(), "https://mingsensei.site/").html();
+    assertTrue(approved.contains("href=\"https://mingsensei.site/booking?tablePhotos=3,4\""));
+    assertTrue(approved.contains("cancelled automatically"));
+    assertTrue(BookingEmailRenderer.render("pending", booking, Map.of(), "https://mingsensei.site").html().contains("cancelled automatically"));
+    assertFalse(BookingEmailRenderer.render("rejected", booking, Map.of(), "https://mingsensei.site").html().contains("tablePhotos"));
+    assertFalse(BookingEmailRenderer.render("approved", booking, Map.of(), "javascript:alert(1)").html().contains("tablePhotos"));
+  }
+
+  @Test
   void mapsDatabaseRowsLikeTheOriginalApi() {
     ObjectNode row = Json.obj("id", 7, "booking_code", "RTR-1", "start_time", "18:00:00", "end_time", "20:00:00", "booking_tables", List.of(
       Json.obj("table", Json.obj("id", 2, "table_number", "T10", "area", "ROMA")), Json.obj("table", Json.obj("id", 1, "table_number", "T9", "area", "ROMA")), Json.obj("table", null)));

@@ -40,7 +40,9 @@ public final class BookingEmailRenderer {
 
   private static final String HOLD_NOTICE = "\n<div style=\"margin:-10px 0 22px;padding:18px 20px;border-radius:16px;background:#fff7ed;border:1px solid #f59e0b;\">\n"
     + "  <div style=\"font-size:16px;font-weight:800;color:#92400e;\">Important arrival notice</div>\n"
-    + "  <div style=\"margin-top:6px;font-size:14px;line-height:1.6;color:#92400e;\">We will hold your table for only <strong>15 minutes</strong> from your reservation time. Please arrive on time.</div>\n"
+    + "  <div style=\"margin-top:6px;font-size:14px;line-height:1.6;color:#92400e;\">We hold your table for <strong>15 minutes</strong> from your reservation time. "
+    + "If you have not arrived within 15 minutes, your booking will be <strong>cancelled automatically</strong> and the table released to other guests. "
+    + "Running late? Please call us at " + PHONE + ".</div>\n"
     + "</div>";
 
   private record Template(String subject, String title, String intro, String highlight) {}
@@ -55,7 +57,7 @@ public final class BookingEmailRenderer {
           + "</div>");
       case "pending" -> new Template("Riverside Terrace booking received", "Booking Request Received",
         "Thank you for choosing Riverside Terrace. We have received your request and our team is reviewing your table reservation.",
-        statusPanel("Pending approval", "Your booking is waiting for restaurant confirmation.", "#991b1b", "#fee2e2"));
+        statusPanel("Pending approval", "Your booking is waiting for restaurant confirmation.", "#991b1b", "#fee2e2") + HOLD_NOTICE);
       case "approved" -> new Template("Riverside Terrace booking approved", "Booking Confirmed",
         "Thank you for choosing Riverside Terrace. Your booking has been confirmed and we look forward to welcoming you.",
         statusPanel("Confirmed", "Your table is reserved. Please arrive on time so we can prepare the best experience for your party.", "#166534", "#dcfce7") + HOLD_NOTICE);
@@ -67,7 +69,7 @@ public final class BookingEmailRenderer {
         statusPanel("Cancelled", "This reservation is no longer active.", "#374151", "#f3f4f6"));
       case "updated" -> new Template("Riverside Terrace booking updated", "Booking Updated",
         "Thank you for choosing Riverside Terrace. Your booking details have been updated by our team.",
-        statusPanel("Updated", "Please review the latest reservation details below.", "#92400e", "#fef3c7"));
+        statusPanel("Updated", "Please review the latest reservation details below.", "#92400e", "#fef3c7") + HOLD_NOTICE);
       default -> throw new IllegalArgumentException("Unknown email template: " + kind);
     };
   }
@@ -79,8 +81,30 @@ public final class BookingEmailRenderer {
       + "</tr>";
   }
 
-  public static Email render(String kind, JsonNode booking, Map<String, String> extra) {
+  /** Kinds whose booking is still active, so the guest may want to see where they will sit. */
+  private static final List<String> PHOTO_KINDS = List.of("pending", "approved", "updated");
+
+  /** Link to the site's shared table photo viewer (the same one the booking page opens). */
+  static String tablePhotosUrl(String siteUrl, JsonNode booking) {
+    String ids = Json.list(Json.get(booking, "tables")).stream().map(table -> Json.jsString(Json.get(table, "id")))
+      .filter(id -> id.matches("\\d+")).collect(Collectors.joining(","));
+    if (siteUrl == null || !siteUrl.matches("https?://[^\\s\"'<>]+") || ids.isEmpty()) return null;
+    return siteUrl.replaceAll("/+$", "") + "/booking?tablePhotos=" + ids;
+  }
+
+  private static String photosButton(String url) {
+    return "\n<div style=\"margin:22px 0 0;padding:18px 20px;border-radius:16px;background:#faf7f4;border:1px solid #eadfd8;text-align:center;\">\n"
+      + "  <div style=\"font-size:15px;font-weight:800;color:#2f241f;\">See where you will sit</div>\n"
+      + "  <div style=\"margin-top:4px;font-size:13px;line-height:1.6;color:#6b7280;\">Photos of your table's location and the view from your seat.</div>\n"
+      + "  <a href=\"" + escapeHtml(url) + "\" style=\"display:inline-block;margin-top:12px;padding:12px 22px;border-radius:999px;background:#7f1d1d;color:#ffffff;font-size:14px;font-weight:800;text-decoration:none;\">View table photos</a>\n"
+      + "</div>";
+  }
+
+  public static Email render(String kind, JsonNode booking, Map<String, String> extra) { return render(kind, booking, extra, null); }
+
+  public static Email render(String kind, JsonNode booking, Map<String, String> extra, String siteUrl) {
     Template template = template(kind, booking, extra);
+    String photosUrl = PHOTO_KINDS.contains(kind) ? tablePhotosUrl(siteUrl, booking) : null;
     List<String> tables = Json.list(Json.get(booking, "tables")).stream().map(table -> Json.jsString(Json.get(table, "tableNumber"))).collect(Collectors.toList());
     String details = row("Booking code", text(booking.get("bookingCode"))) + row("Status", text(booking.get("status"))) + row("Area", text(booking.get("area")))
       + row("Table", String.join(", ", tables)) + row("Date", text(booking.get("bookingDate")))
@@ -103,6 +127,7 @@ public final class BookingEmailRenderer {
       + "            <div style=\"padding:14px 18px;background:#faf7f4;font-weight:800;text-transform:uppercase;letter-spacing:.8px;font-size:12px;color:#7f1d1d;\">Reservation Details</div>\n"
       + "            <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;border-collapse:collapse;font-size:15px;\">" + details + "</table>\n"
       + "          </div>\n"
+      + (photosUrl == null ? "" : "          " + photosButton(photosUrl) + "\n")
       + "          <div style=\"margin-top:26px;padding:18px;border-radius:16px;background:#fff7ed;border:1px solid #fed7aa;\">\n"
       + "            <p style=\"margin:0;font-size:15px;line-height:1.7;\"><strong>Thank you for choosing Riverside Terrace.</strong><br>Our team is preparing a warm, comfortable dining experience for you and your guests.</p>\n"
       + "          </div>\n"

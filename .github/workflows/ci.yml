@@ -56,4 +56,7 @@ jobs:
           name: backend-jar
           path: build/
       - name: Deploy backend and verify health
+        env:
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+          PUBLIC_SITE_URL: https://mingsensei.site
         run: bash deployment/deploy.sh "$GITHUB_SHA" "$PWD/build/menu-maestro-backend.jar"

@@ -24,6 +24,7 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.drew.imaging.ImageMetadataReader;
@@ -31,6 +32,7 @@ import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifIFD0Directory;
 import com.menumaestro.backend.common.json.Json;
 import com.menumaestro.backend.common.web.ApiException;
+import com.menumaestro.backend.media.CloudinaryClient;
 import com.menumaestro.backend.supabase.PostgrestResult;
 import com.menumaestro.backend.supabase.SupabaseClient;
 
@@ -38,13 +40,16 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * Menu image pipeline: decode (JPEG/PNG/WebP/GIF/BMP/TIFF, HEIC/AVIF via libheif when
- * installed), auto-orient from EXIF, produce a 1200px WebP (q80) and a 400px thumbnail
- * (q72), and upload both to the menu-images bucket.
+ * Image pipeline for menu and table photos: decode (JPEG/PNG/WebP/GIF/BMP/TIFF, HEIC/AVIF via
+ * libheif when installed), auto-orient from EXIF and encode WebP renditions. Photos are stored on
+ * Cloudinary when it is configured; otherwise menu photos fall back to the Supabase menu-images
+ * bucket (local development).
  */
 @Service
 public class ImageService {
   public static final String BUCKET = "menu-images";
+  public static final String MENU_FOLDER = "rtr/menu";
+  public static final String TABLE_FOLDER = "rtr/tables";
   private static final long MAX_PIXELS = 40_000_000L;
   private static final List<String> HEIF_BRANDS = List.of("heic", "heix", "hevc", "hevx", "mif1", "msf1", "avif", "avis");
   private static final String DECODE_ERROR = "Cannot decode this image or it exceeds 40 megapixels. Please try a smaller JPEG, PNG, WebP, AVIF or HEIC image.";
@@ -53,6 +58,16 @@ public class ImageService {
     ImageIO.setUseCache(false);
     ImageIO.scanForPlugins();
   }
+
+  private final CloudinaryClient cloudinary;
+
+  @Autowired
+  public ImageService(CloudinaryClient cloudinary) { this.cloudinary = cloudinary; }
+
+  /** Encoding only (tests). */
+  ImageService() { this(null); }
+
+  private boolean useCloudinary() { return cloudinary != null && cloudinary.configured(); }
 
   public record Encoded(byte[] full, byte[] thumbnail) {}
 
@@ -66,8 +81,37 @@ public class ImageService {
     }
   }
 
+  /** One larger WebP for table photos, which guests open full screen. */
+  byte[] encodeTablePhoto(byte[] bytes) {
+    try {
+      return webp(resizeInside(orient(decode(bytes), orientation(bytes)), 1600), 0.82f);
+    } catch (Exception | LinkageError error) {
+      throw new ApiException(400, DECODE_ERROR);
+    }
+  }
+
   public ObjectNode uploadImages(SupabaseClient client, byte[] bytes) {
     Encoded encoded = encode(bytes);
+    return useCloudinary() ? storeOnCloudinary(encoded.full(), encoded.thumbnail()) : storeOnSupabase(client, encoded);
+  }
+
+  /** Encodes and stores a table photo on Cloudinary and returns its URL. */
+  public String uploadTablePhoto(byte[] bytes) {
+    if (!useCloudinary()) throw new ApiException(503, "Image storage is not configured. Set CLOUDINARY_URL on the server.");
+    return cloudinary.upload(encodeTablePhoto(bytes), TABLE_FOLDER, "image/webp");
+  }
+
+  private ObjectNode storeOnCloudinary(byte[] full, byte[] thumbnail) {
+    String imageUrl = cloudinary.upload(full, MENU_FOLDER, "image/webp");
+    try {
+      return Json.obj("imageUrl", imageUrl, "thumbnailUrl", cloudinary.upload(thumbnail, MENU_FOLDER, "image/webp"));
+    } catch (RuntimeException error) {
+      cloudinary.destroy(imageUrl);
+      throw error;
+    }
+  }
+
+  private ObjectNode storeOnSupabase(SupabaseClient client, Encoded encoded) {
     List<String> names = List.of(UUID.randomUUID() + ".webp", UUID.randomUUID() + "-thumb.webp");
     try {
       // Sequential uploads let us roll back a partial upload deterministically.
@@ -80,21 +124,47 @@ public class ImageService {
     return Json.obj("imageUrl", client.publicUrl(BUCKET, names.get(0)), "thumbnailUrl", client.publicUrl(BUCKET, names.get(1)));
   }
 
-  /** Re-encodes a stored image when it is not an optimized WebP with a thumbnail. Returns null when skipped. */
-  public ObjectNode optimizeItem(SupabaseClient client, JsonNode item, String supabaseUrl) {
-    String imageUrl = Json.str(item, "image_url");
+  /** The object path when the URL points at this project's menu-images bucket, else null. */
+  static String storagePath(String imageUrl, String supabaseUrl) {
     if (imageUrl == null || imageUrl.isEmpty()) return null;
     String prefix = supabaseUrl + "/storage/v1/object/public/" + BUCKET + "/";
+    return imageUrl.startsWith(prefix) ? decodeURIComponent(imageUrl.substring(prefix.length()).split("\\?", -1)[0]) : null;
+  }
+
+  public boolean storedOnSupabase(JsonNode item, String supabaseUrl) { return storagePath(Json.str(item, "image_url"), supabaseUrl) != null; }
+
+  /**
+   * Re-encodes a stored image when it is not an optimized WebP with a thumbnail and, when Cloudinary
+   * is configured, moves it from Supabase Storage to Cloudinary. Returns null when skipped.
+   */
+  public ObjectNode optimizeItem(SupabaseClient client, JsonNode item, String supabaseUrl) {
+    String path = storagePath(Json.str(item, "image_url"), supabaseUrl);
     // Only read this project's own storage; never fetch arbitrary image URLs on the server.
-    if (!imageUrl.startsWith(prefix)) return null;
-    String path = decodeURIComponent(imageUrl.substring(prefix.length()).split("\\?", -1)[0]);
+    if (path == null) return null;
     byte[] blob = client.download(BUCKET, path);
     if (blob == null) throw ApiException.database();
-    if (path.endsWith(".webp") && blob.length <= 400 * 1024 && Json.truthy(Json.get(item, "thumbnail_url"))) return null;
-    ObjectNode images = uploadImages(client, blob);
+    boolean optimized = path.endsWith(".webp") && blob.length <= 400 * 1024 && Json.truthy(Json.get(item, "thumbnail_url"));
+    ObjectNode images;
+    if (useCloudinary()) {
+      // Already-optimized files are copied byte for byte; re-encoding WebP would only lose quality.
+      String thumbPath = optimized ? storagePath(Json.str(item, "thumbnail_url"), supabaseUrl) : null;
+      byte[] thumb = thumbPath == null ? null : client.download(BUCKET, thumbPath);
+      if (thumb != null) images = storeOnCloudinary(blob, thumb);
+      else {
+        Encoded encoded = encode(blob);
+        images = storeOnCloudinary(encoded.full(), encoded.thumbnail());
+      }
+    } else {
+      if (optimized) return null;
+      images = uploadImages(client, blob);
+    }
     PostgrestResult result = client.from("menu_items")
       .update(Json.obj("image_url", images.get("imageUrl"), "thumbnail_url", images.get("thumbnailUrl")))
       .eq("id", Json.str(item, "id")).execute();
+    if (result.failed() && useCloudinary()) {
+      cloudinary.destroy(Json.str(images, "imageUrl"));
+      cloudinary.destroy(Json.str(images, "thumbnailUrl"));
+    }
     result.unwrap();
     return images;
   }
