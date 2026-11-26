@@ -21,18 +21,18 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class ApiGatewayTest {
   @Autowired MockMvc mvc;
-  @Autowired com.menumaestro.backend.reservation.ReservationService reservations;
+  @Autowired com.menumaestro.backend.service.ReservationService reservations;
 
-  private static com.menumaestro.backend.auth.AuthService.UserSession admin() {
-    return new com.menumaestro.backend.auth.AuthService.UserSession(
-      new com.menumaestro.backend.supabase.SupabaseClient("http://127.0.0.1:9", "k", "t", java.time.Duration.ofSeconds(1)), "admin-id", "a@b.co", true, "t");
+  private static com.menumaestro.backend.service.AuthService.UserSession admin() {
+    return new com.menumaestro.backend.service.AuthService.UserSession(
+      new com.menumaestro.backend.client.supabase.SupabaseClient("http://127.0.0.1:9", "k", "t", java.time.Duration.ofSeconds(1)), "admin-id", "a@b.co", true, "t");
   }
 
   @Test
   void streamsBookingEventsToAdmins() throws Exception {
-    var result = mvc.perform(get("/api/admin/bookings/events").requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()))
+    var result = mvc.perform(get("/api/admin/bookings/events").requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()))
       .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted()).andReturn();
-    reservations.events().emit(new com.menumaestro.backend.reservation.BookingEvents.Changed(42, true));
+    reservations.events().emit(new com.menumaestro.backend.event.BookingEvents.Changed(42, true));
     String body = result.getResponse().getContentAsString();
     org.junit.jupiter.api.Assertions.assertTrue(body.startsWith("event: connected\ndata: ok\n\n"), body);
     org.junit.jupiter.api.Assertions.assertTrue(body.contains("event: booking.changed\ndata: {\"type\":\"booking.changed\",\"bookingId\":42,\"newCustomerBooking\":true}\n\n"), body);
@@ -42,18 +42,18 @@ class ApiGatewayTest {
 
   @Test
   void servesAdminKnowledgeAndValidatesAdminBodies() throws Exception {
-    mvc.perform(get("/api/admin/knowledge").requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()))
+    mvc.perform(get("/api/admin/knowledge").requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()))
       .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("\"version\":\"")));
     mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/admin/knowledge")
-        .requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()).contentType("application/json").content("{\"content\":\"x\",\"version\":\"0\"}"))
+        .requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()).contentType("application/json").content("{\"content\":\"x\",\"version\":\"0\"}"))
       .andExpect(status().isBadRequest()).andExpect(content().string("{\"error\":\"version: Invalid\"}"));
-    mvc.perform(post("/api/admin/bookings").requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()).contentType("application/json")
+    mvc.perform(post("/api/admin/bookings").requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()).contentType("application/json")
         .content("{\"customerName\":\"A\",\"numberOfGuests\":2,\"bookingDate\":\"2026-12-01\",\"startTime\":\"19:00\",\"endTime\":\"21:00\",\"area\":\"ROMA\",\"tableIds\":[1]}"))
       .andExpect(status().isServiceUnavailable())
       .andExpect(content().string("{\"error\":\"Reservations are not configured. Set SUPABASE_SERVICE_ROLE_KEY on the server.\"}"));
-    mvc.perform(get("/api/admin/push/config").requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()))
+    mvc.perform(get("/api/admin/push/config").requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()))
       .andExpect(content().string("{\"enabled\":false,\"publicKey\":\"\",\"subscriptionCount\":0}"));
-    mvc.perform(get("/api/admin/bookings/abc").requestAttr(com.menumaestro.backend.auth.AuthService.ADMIN_ATTRIBUTE, admin()))
+    mvc.perform(get("/api/admin/bookings/abc").requestAttr(com.menumaestro.backend.service.AuthService.ADMIN_ATTRIBUTE, admin()))
       .andExpect(status().isBadRequest()).andExpect(content().string("{\"error\":\": Expected number, received nan\"}"));
   }
 

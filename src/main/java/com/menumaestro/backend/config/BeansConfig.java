@@ -9,16 +9,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import com.menumaestro.backend.ai.AiClient;
-import com.menumaestro.backend.chat.ConversationCache;
-import com.menumaestro.backend.chat.MenuRetriever;
-import com.menumaestro.backend.common.json.Json;
-import com.menumaestro.backend.knowledge.KnowledgeStore;
-import com.menumaestro.backend.mail.Mailer;
-import com.menumaestro.backend.menu.Async;
-import com.menumaestro.backend.push.PushService;
-import com.menumaestro.backend.reservation.ReservationService;
-import com.menumaestro.backend.supabase.SupabaseClient;
+import com.menumaestro.backend.client.AiClient;
+import com.menumaestro.backend.client.supabase.SupabaseClient;
+import com.menumaestro.backend.repository.KnowledgeStore;
+import com.menumaestro.backend.service.PushService;
+import com.menumaestro.backend.service.ReservationService;
+import com.menumaestro.backend.service.chat.ConversationCache;
+import com.menumaestro.backend.service.chat.MenuRetriever;
+import com.menumaestro.backend.service.mail.Mailer;
+import com.menumaestro.backend.util.Async;
+import com.menumaestro.backend.util.Json;
 
 /** Wires the framework-independent services of the monolith. */
 @Configuration

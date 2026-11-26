@@ -11,17 +11,27 @@ accessed over the same REST APIs and row-level security as before.
 src/main/java/com/menumaestro/backend/
   MenuMaestroApplication   entry point (loads ./.env like `node --env-file`)
   config/        AppConfig (environment variables), bean wiring, MVC config
-  common/        JSON helpers with JavaScript semantics, zod-compatible validation, web layer
-                 (gateway filter: CORS/origin, security headers, rate limits, error bodies)
-  supabase/      PostgREST query builder, GoTrue auth and Storage clients
-  auth/          encrypted session cookie, admin guard, /api/auth
-  ai/            Groq/Gemini JSON client with model failover and cooldowns
-  menu/          catalog snapshot cache, public menu and admin menu APIs, images, maintenance jobs
-  chat/          /api/chat: intent evidence, query compiler, retrieval, recommendations, booking assistant
-  knowledge/     knowledge document store, restaurant answers, contact migration
-  reservation/   booking rules and service, guest and admin APIs, SSE booking events
-  mail/          booking email templates and SMTP sender
-  push/          VAPID web push (RFC 8291/8292) and admin subscription API
+  controller/    REST controllers (@RestController): auth, menu, chat, knowledge, reservations,
+                 push, health, and the /api/admin/* controllers
+  service/       business logic: auth, catalog, images, maintenance jobs, reservations
+                 (rules, backup CSV/HTML), push, AI quota
+    chat/        /api/chat engine: query compiler, retrieval, recommendations, booking and
+                 restaurant assistants, conversation cache
+    mail/        booking email templates and SMTP sender
+  repository/    knowledge document store (Markdown file)
+  client/        external APIs: Groq/Gemini AI, Cloudinary, VAPID web push (RFC 8291/8292)
+    supabase/    PostgREST query builder, GoTrue auth and Storage clients
+  dto/           request schemas (menu, reservation)
+  model/         server-side chat state
+  event/         in-process booking event bus (SSE, push alerts)
+  scheduler/     daily booking backup job
+  migration/     one-off startup migrations (contact facts, menu images)
+  security/      gateway filter (CORS/origin, security headers, rate limits), admin
+                 interceptor, encrypted session cookie, client IP
+  exception/     ApiException, validation errors, @RestControllerAdvice, error bodies
+  validation/    zod-compatible schema validation
+  util/          JSON helpers with JavaScript semantics, async helpers, catalog cache,
+                 request/response helpers
 ```
 
 All endpoints, request validation messages, response JSON (field order included) and

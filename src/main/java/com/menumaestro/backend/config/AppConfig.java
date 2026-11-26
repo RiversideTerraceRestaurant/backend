@@ -86,6 +86,6 @@ public record AppConfig(
   /** Number(value || fallback). */
   private static double number(String value, double fallback) {
     if (empty(value)) return fallback;
-    return com.menumaestro.backend.common.json.Js.toNumber(value);
+    return com.menumaestro.backend.util.Js.toNumber(value);
   }
 }
