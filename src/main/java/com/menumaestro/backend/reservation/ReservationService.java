@@ -292,6 +292,15 @@ public class ReservationService {
     return result;
   }
 
+  /** Pending and confirmed (email-verified) bookings on or after `from`, in seating order, for backups. */
+  public List<ObjectNode> upcoming(String from) {
+    JsonNode rows = unwrapDb(requireDb().from("bookings").select(BOOKING_SELECT).eq("email_verified", true).gte("booking_date", from)
+      .in("status", ReservationRules.BLOCKING).order("booking_date").order("start_time").limit(5000).execute());
+    List<ObjectNode> result = new ArrayList<>();
+    for (JsonNode row : rows) result.add(ReservationRules.toBooking(row));
+    return result;
+  }
+
   public ObjectNode page(JsonNode filters) {
     PostgrestQuery query = requireDb().from("bookings").select(BOOKING_SELECT, true, false).eq("email_verified", true);
     if (Json.has(filters, "date")) query = query.eq("booking_date", Json.str(filters, "date"));

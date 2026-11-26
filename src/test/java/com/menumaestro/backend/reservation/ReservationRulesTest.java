@@ -129,4 +129,26 @@ class ReservationRulesTest {
     assertEquals("Roma", Json.str(booking.get("tables").get(0), "locationName"));
     assertFalse(booking.has("note"));
   }
+
+  @Test
+  void backupCsvIsExcelFriendlyAndNeutralisesFormulas() {
+    ObjectNode booking = Json.obj("bookingCode", "RTR-1", "status", "APPROVED", "area", "TERRACE", "tables", List.of(Json.obj("tableNumber", "T3"), Json.obj("tableNumber", "T4")),
+      "bookingDate", "2026-11-22", "startTime", "19:00", "endTime", "21:00", "numberOfGuests", 4, "customerPhone", "+84 912 345 678",
+      "customerEmail", "timemap@riversideterrace.local", "customerName", "=HYPERLINK(\"x\")", "note", "Sinh nhật, \"bánh\"");
+    String csv = new String(BookingBackup.csv(List.of(booking)), java.nio.charset.StandardCharsets.UTF_8);
+    assertTrue(csv.startsWith("\uFEFF\"Date\""));
+    String line = csv.split("\r\n")[1];
+    assertTrue(line.startsWith("\"2026-11-22\",\"19:00\",\"21:00\",\"RTR-1\",\"APPROVED\",\"'=HYPERLINK(\"\"x\"\")\",\"'+84 912 345 678\",\"\",\"4\",\"Terrace\",\"T3 + T4\""), line);
+    assertTrue(line.contains("\"Sinh nhật, \"\"bánh\"\"\""));
+    String html = BookingBackup.html("2026-11-22", List.of(booking), "2026-11-21 07:00");
+    assertTrue(html.contains("2026-11-22 · 1"));
+    assertFalse(html.contains("<script"));
+  }
+
+  @Test
+  void backupRunsAtTheNextConfiguredHour() {
+    java.time.ZonedDateTime morning = java.time.ZonedDateTime.parse("2026-11-21T06:30:00+07:00[Asia/Ho_Chi_Minh]");
+    assertEquals("2026-11-21T07:00", BookingBackupJob.nextRun(morning, 7).toLocalDateTime().toString());
+    assertEquals("2026-11-22T07:00", BookingBackupJob.nextRun(morning.withHour(7), 7).toLocalDateTime().toString());
+  }
 }

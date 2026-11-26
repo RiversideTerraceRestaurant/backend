@@ -15,7 +15,10 @@ public record AppConfig(
   String supabaseUrl, String supabaseKey, String sessionSecret,
   String groqKey, String groqModel, String geminiKey, String geminiModel,
   boolean trustProxy, int dailyLimit, String knowledgePath,
-  String supabaseServiceKey, String timeZone, Push push, Mail mail, Cloudinary cloudinary, String siteUrl) {
+  String supabaseServiceKey, String timeZone, Push push, Mail mail, Cloudinary cloudinary, String siteUrl, Backup backup) {
+
+  /** Daily reservation backup email: recipients (empty = off) and the hour it is sent, restaurant time. */
+  public record Backup(List<String> emails, int hour) {}
 
   /** Cloudinary account for menu and table photos. Empty values mean "not configured". */
   public record Cloudinary(String cloudName, String apiKey, String apiSecret) {
@@ -54,7 +57,16 @@ public record AppConfig(
       new Push(or(env.apply("VAPID_PUBLIC_KEY"), ""), or(env.apply("VAPID_PRIVATE_KEY"), ""), or(env.apply("VAPID_SUBJECT"), "mailto:admin@riversideterrace.vn")),
       new Mail(or(env.apply("MAIL_HOST"), ""), (int) number(env.apply("MAIL_PORT"), 587), "true".equals(env.apply("MAIL_SECURE")),
         or(env.apply("MAIL_USERNAME"), ""), or(env.apply("MAIL_PASSWORD"), ""), or(env.apply("MAIL_FROM"), "")),
-      cloudinary(env), or(env.apply("PUBLIC_SITE_URL"), origins.get(0)).replaceAll("/+$", ""));
+      cloudinary(env), or(env.apply("PUBLIC_SITE_URL"), origins.get(0)).replaceAll("/+$", ""), backup(env));
+  }
+
+  /** BACKUP_EMAIL: comma-separated recipients, default the restaurant inbox; "off" disables. BACKUP_HOUR: 0-23, default 7. */
+  static Backup backup(Function<String, String> env) {
+    String value = or(env.apply("BACKUP_EMAIL"), "litalianoriverside@gmail.com").trim();
+    List<String> emails = "off".equalsIgnoreCase(value) ? List.of()
+      : Arrays.stream(value.split(",")).map(String::trim).filter(email -> email.matches("[^\\s@,]+@[^\\s@,]+\\.[^\\s@,]+")).toList();
+    int hour = (int) number(env.apply("BACKUP_HOUR"), 7);
+    return new Backup(emails, hour >= 0 && hour <= 23 ? hour : 7);
   }
 
   /** CLOUDINARY_URL (cloudinary://key:secret@cloud) or the three CLOUDINARY_* variables. */

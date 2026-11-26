@@ -23,6 +23,9 @@ public interface Mailer {
 
   void send(String kind, JsonNode booking, Map<String, String> extra) throws Exception;
 
+  /** Sends the reservation backup (HTML summary plus CSV attachment) to staff addresses. */
+  void sendBackup(java.util.List<String> to, String subject, String html, String fileName, byte[] csv) throws Exception;
+
   static Mailer create(AppConfig config) {
     Logger log = LoggerFactory.getLogger(Mailer.class);
     AppConfig.Mail mail = config.mail();
@@ -31,6 +34,7 @@ public interface Mailer {
         return new Mailer() {
           public boolean configured() { return false; }
           public void send(String kind, JsonNode booking, Map<String, String> extra) { throw new IllegalStateException("Email is not configured."); }
+          public void sendBackup(java.util.List<String> to, String subject, String html, String fileName, byte[] csv) { throw new IllegalStateException("Email is not configured."); }
         };
       }
       return new Mailer() {
@@ -38,6 +42,9 @@ public interface Mailer {
         public void send(String kind, JsonNode booking, Map<String, String> extra) {
           log.info("[mail:dev] {} -> {} ({}){}", kind, Json.jsString(booking.get("customerEmail")), Json.jsString(booking.get("bookingCode")),
             extra.get("otp") != null ? " OTP=" + extra.get("otp") : "");
+        }
+        public void sendBackup(java.util.List<String> to, String subject, String html, String fileName, byte[] csv) {
+          log.info("[mail:dev] backup -> {} ({}, {} bytes)", to, fileName, csv.length);
         }
       };
     }
@@ -75,6 +82,18 @@ public interface Mailer {
         helper.setTo(Json.jsString(booking.get("customerEmail")));
         helper.setSubject(email.subject());
         helper.setText(email.html(), true);
+        sender.send(message);
+      }
+
+      public void sendBackup(java.util.List<String> to, String subject, String html, String fileName, byte[] csv) throws Exception {
+        if (from.isEmpty()) throw new IllegalStateException("Email sender is not configured. Set MAIL_FROM or MAIL_USERNAME.");
+        MimeMessage message = sender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        helper.setFrom(from);
+        helper.setTo(to.toArray(String[]::new));
+        helper.setSubject(subject);
+        helper.setText(html, true);
+        helper.addAttachment(fileName, new org.springframework.core.io.ByteArrayResource(csv), "text/csv; charset=utf-8");
         sender.send(message);
       }
     };

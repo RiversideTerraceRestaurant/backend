@@ -22,6 +22,7 @@ import com.menumaestro.backend.auth.AuthService;
 import com.menumaestro.backend.common.json.Json;
 import com.menumaestro.backend.common.validation.Schema;
 import com.menumaestro.backend.common.validation.Z;
+import com.menumaestro.backend.common.web.ApiException;
 import com.menumaestro.backend.common.web.RateLimiter;
 import com.menumaestro.backend.common.web.RequestBodies;
 import com.menumaestro.backend.common.web.Responses;
@@ -47,12 +48,14 @@ public class AdminReservationController {
     return thread;
   });
 
+  private final BookingBackupJob backup;
   private final ImageService images;
   private final CloudinaryClient cloudinary;
   private final RateLimiter limiter;
 
-  public AdminReservationController(ReservationService service, ImageService images, CloudinaryClient cloudinary, RateLimiter limiter) {
+  public AdminReservationController(ReservationService service, BookingBackupJob backup, ImageService images, CloudinaryClient cloudinary, RateLimiter limiter) {
     this.service = service;
+    this.backup = backup;
     this.images = images;
     this.cloudinary = cloudinary;
     this.limiter = limiter;
@@ -91,6 +94,33 @@ public class AdminReservationController {
   @GetMapping("/bookings/page")
   public ResponseEntity<String> page(HttpServletRequest request) {
     return Responses.ok(service.page(ReservationSchemas.SEARCH.parse(ReservationSchemas.fromQuery(request))));
+  }
+
+  /** "from" query value (yyyy-MM-dd), defaulting to today in the restaurant's time zone. */
+  private String fromDate(String value) {
+    if (value == null || value.isEmpty()) return ReservationRules.restaurantNow(service.timeZone(), service.now()).date();
+    try {
+      if (value.matches("\\d{4}-\\d{2}-\\d{2}")) return java.time.LocalDate.parse(value).toString();
+    } catch (java.time.DateTimeException ignored) { /* Reported below. */ }
+    throw new ApiException(400, "from must be a date (yyyy-MM-dd).");
+  }
+
+  /** CSV backup of pending and confirmed bookings from a date onwards (opens in Excel / Google Sheets). */
+  @GetMapping("/bookings/export")
+  public ResponseEntity<byte[]> export(HttpServletRequest request) {
+    String from = fromDate(request.getParameter("from"));
+    return ResponseEntity.ok()
+      .contentType(MediaType.parseMediaType("text/csv; charset=utf-8"))
+      .header("Content-Disposition", "attachment; filename=\"" + BookingBackupJob.fileName(from) + "\"")
+      .body(BookingBackup.csv(service.upcoming(from)));
+  }
+
+  /** Emails the backup now (the same email that is sent automatically every morning). */
+  @PostMapping("/bookings/backup")
+  public ResponseEntity<String> emailBackup(HttpServletRequest request) throws Exception {
+    limiter.limit("booking-backup:" + AuthService.currentAdmin(request).userId(), 5);
+    BookingBackupJob.Result result = backup.send(fromDate(request.getParameter("from")));
+    return Responses.ok(Json.obj("from", result.from(), "count", result.count(), "sentTo", result.sentTo()));
   }
 
   @GetMapping("/bookings/pending-count")
