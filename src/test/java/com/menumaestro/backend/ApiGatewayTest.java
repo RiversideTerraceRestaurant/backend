@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
@@ -63,6 +64,13 @@ class ApiGatewayTest {
       .andExpect(header().string("Cache-Control", "no-store"))
       .andExpect(header().string("X-Content-Type-Options", "nosniff"))
       .andExpect(header().string("Referrer-Policy", "same-origin"));
+  }
+
+  @Test
+  void databaseHealthReportsAnUnreachableSupabaseAs503() throws Exception {
+    // The test context points SUPABASE_URL at a closed port.
+    mvc.perform(get("/api/health/db")).andExpect(status().isServiceUnavailable())
+      .andExpect(jsonPath("$.ok").value(false)).andExpect(jsonPath("$.db").value("down"));
   }
 
   @Test
