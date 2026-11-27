@@ -232,6 +232,26 @@ public final class ReservationRules {
       String.format("%02d:%02d", local.getHour(), local.getMinute()));
   }
 
+  /** Every booking lasts exactly this long from its start time; guests and staff only choose the start. */
+  public static final int BOOKING_MINUTES = 120;
+  /** Latest start so the table is free again by 23:30. */
+  public static final String LAST_START = "21:30";
+
+  /** The end of a booking that starts at `startTime` (HH:mm). */
+  public static String fixedEndTime(String startTime) {
+    if (startTime == null || !startTime.matches("\\d{2}:\\d{2}.*")) throw bad("Use HH:mm.");
+    if (startTime.substring(0, 5).compareTo(LAST_START) > 0) throw bad("The latest start time is " + LAST_START + ".");
+    int minutes = Integer.parseInt(startTime.substring(0, 2)) * 60 + Integer.parseInt(startTime.substring(3, 5)) + BOOKING_MINUTES;
+    return String.format("%02d:%02d", minutes / 60, minutes % 60);
+  }
+
+  /** Copy of a booking request whose end time is always start + 2 hours, whatever the client sent. */
+  public static ObjectNode withFixedEnd(JsonNode input) {
+    ObjectNode result = Json.copy(input);
+    result.put("endTime", fixedEndTime(Json.str(input, "startTime")));
+    return result;
+  }
+
   public static void validateTimeRange(String startTime, String endTime) {
     if (endTime.compareTo(startTime) <= 0) throw bad("End time must be after start time.");
   }

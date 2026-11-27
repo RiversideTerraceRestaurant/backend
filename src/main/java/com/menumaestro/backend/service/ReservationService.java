@@ -247,6 +247,7 @@ public class ReservationService {
   private String otp() { return Js.padStart(String.valueOf(RANDOM.nextInt(1_000_000)), 6, '0'); }
 
   public ObjectNode requestOtp(JsonNode input) {
+    input = ReservationRules.withFixedEnd(input);
     ReservationRules.validateTimeRange(Json.str(input, "startTime"), Json.str(input, "endTime"));
     ReservationRules.validateNotPast(Json.str(input, "bookingDate"), Json.str(input, "startTime"), restaurantNow());
     int guests = input.get("numberOfGuests").asInt();
@@ -382,6 +383,7 @@ public class ReservationService {
   private static Object orElse(JsonNode value, Object fallback) { return Json.truthy(value) ? value : fallback; }
 
   public ObjectNode create(JsonNode input) {
+    input = ReservationRules.withFixedEnd(input);
     ReservationRules.validateTimeRange(Json.str(input, "startTime"), Json.str(input, "endTime"));
     List<Long> tableIds = ids(input.get("tableIds"));
     ReservationRules.validateTablesForBooking(loadTables(tableIds), Json.str(input, "area"), input.get("numberOfGuests").asInt());
@@ -397,6 +399,7 @@ public class ReservationService {
   }
 
   public ObjectNode update(long id, JsonNode input) {
+    input = ReservationRules.withFixedEnd(input);
     ReservationRules.validateTimeRange(Json.str(input, "startTime"), Json.str(input, "endTime"));
     ObjectNode current = booking(id);
     List<Long> tableIds = ids(input.get("tableIds"));

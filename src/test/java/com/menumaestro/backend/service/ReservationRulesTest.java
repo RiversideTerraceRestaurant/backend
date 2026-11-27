@@ -98,6 +98,14 @@ class ReservationRulesTest {
   }
 
   @Test
+  void bookingsLastExactlyTwoHoursFromTheStartTime() {
+    assertEquals("21:00", ReservationRules.fixedEndTime("19:00"));
+    assertEquals("23:30", ReservationRules.fixedEndTime("21:30"));
+    assertEquals("13:30", ReservationRules.withFixedEnd(Json.obj("startTime", "11:30", "endTime", "15:30")).get("endTime").asString());
+    assertTrue(message(() -> ReservationRules.fixedEndTime("22:00")).contains("latest start"));
+  }
+
+  @Test
   void restaurantTimeUsesTheConfiguredZoneAndQueryValidationTrimsSeconds() {
     assertEquals(new ReservationRules.Now("2026-11-16", "00:30"), ReservationRules.restaurantNow("Asia/Ho_Chi_Minh", Instant.parse("2026-11-15T17:30:00Z")));
     var parsed = ReservationSchemas.AVAILABILITY.parse(Json.obj("area", "ROMA", "date", "2026-11-20", "startTime", "18:00:00", "endTime", "20:00"));
