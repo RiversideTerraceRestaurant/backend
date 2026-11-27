@@ -36,6 +36,20 @@ public final class ReservationRules {
   public static final String PLACEHOLDER_EMAIL = "timemap@riversideterrace.local";
   static final String PLACEHOLDER_PHONE = "0000000000";
   private static final List<String> VERONA_PAIRS = List.of("11,12", "13,14", "15,16");
+  /** Last table number of each area's first column; tables can only be joined within one column. */
+  static final Map<String, Integer> FIRST_COLUMN_LAST = Map.of("TERRACE", 6, "ROMA", 6, "VERONA", 10, "SORRENTO", 4);
+  /**
+   * Physical terrace furniture. T1-T12 are 2-seat places; joining them is done with these tables, so the
+   * terrace can be split at most into 4 four-seat and 4 two-seat tables at any one time.
+   */
+  public static final int TERRACE_FOUR_TOPS = 4;
+  public static final int TERRACE_TWO_TOPS = 4;
+
+  /** 0 for the first column of the area, 1 for the second. */
+  static int columnOf(String area, double number) {
+    Integer last = FIRST_COLUMN_LAST.get(area);
+    return last == null || number <= last ? 0 : 1;
+  }
 
   /** Walk-ins and time-map bookings share a placeholder address; it must not trip the one-booking-per-day rule. */
   static boolean realEmail(String value) { return value != null && !value.isEmpty() && !PLACEHOLDER_EMAIL.equals(value); }
@@ -57,6 +71,8 @@ public final class ReservationRules {
 
   /** Mirrors RTR BookingService.validateTablesForBooking. */
   public static void validateTablesForBooking(List<ObjectNode> tables, String bookingArea, int guests) {
+    if (guests < 1) throw bad("Number of guests must be at least 1.");
+    if (guests > MAX_SELECTED_CAPACITY) throw bad("Tables can be joined for at most 6 guests. Please contact the restaurant for larger parties.");
     if (tables.isEmpty() || tables.size() > MAX_SELECTED_TABLES) throw bad("You may select between 1 and 3 tables.");
     if (tables.stream().anyMatch(table -> !Json.bool(table, "active") || !"AVAILABLE".equals(Json.str(table, "status")))) {
       throw new ApiException(409, "The selected table is no longer available.", "TABLE_NOT_AVAILABLE");
@@ -70,7 +86,7 @@ public final class ReservationRules {
     boolean consecutive = true;
     for (int i = 1; i < numbers.size(); i++) if (numbers.get(i) != numbers.get(i - 1) + 1) consecutive = false;
     if (tables.size() > 1 && !consecutive) throw bad("Only adjacent, consecutively numbered tables may be selected.");
-    if ("TERRACE".equals(bookingArea) && numbers.contains(6d) && numbers.contains(7d)) throw bad("Tables T6 and T7 cannot be joined.");
+    if (numbers.stream().map(number -> columnOf(bookingArea, number)).distinct().count() > 1) throw bad("Only tables in the same column may be joined.");
     if (guests <= 2 && tables.size() != 1) throw bad("Parties of 1-2 guests may select only one table.");
     String joined = String.join(",", numbers.stream().map(com.menumaestro.backend.util.Js::numberToString).toList());
     if ("VERONA".equals(bookingArea) && numbers.stream().anyMatch(number -> number >= 11) && !VERONA_PAIRS.contains(joined)) {
@@ -123,7 +139,7 @@ public final class ReservationRules {
       List<ObjectNode> best = List.of();
       double bestScore = Double.POSITIVE_INFINITY;
       for (double start : byNumber.keySet()) {
-        if (count > 1 && "TERRACE".equals(bookingArea) && start <= 6 && start + count - 1 >= 7) continue;
+        if (columnOf(bookingArea, start) != columnOf(bookingArea, start + count - 1)) continue;
         List<ObjectNode> group = new ArrayList<>();
         for (int offset = 0; offset < count; offset++) {
           ObjectNode table = byNumber.get(start + offset);
@@ -139,6 +155,67 @@ public final class ReservationRules {
       if (!best.isEmpty()) return best;
     }
     return List.of();
+  }
+
+  /** Terrace tables (2 seats each) needed to seat a party. */
+  public static int terraceTablesFor(int guests) { return Math.max(1, Math.min(MAX_SELECTED_TABLES, (guests + 1) / 2)); }
+
+  /** A terrace booking at a time: `tables` joined 2-seat places. */
+  public record TerraceParty(String start, String end, int tables) {}
+
+  /**
+   * Whether every party can get physical tables from the terrace furniture. A party of n places needs
+   * 2n seats from one or more tables (2 places: one 4-top or two 2-tops; 3 places: 4+2, 2+2+2 or 4+4).
+   */
+  public static boolean terraceFurnitureFits(List<Integer> parties) {
+    boolean[][] reach = new boolean[TERRACE_FOUR_TOPS + 1][TERRACE_TWO_TOPS + 1];
+    reach[0][0] = true;
+    for (int places : parties) {
+      boolean[][] next = new boolean[TERRACE_FOUR_TOPS + 1][TERRACE_TWO_TOPS + 1];
+      boolean any = false;
+      for (int fours = 0; fours <= TERRACE_FOUR_TOPS; fours++) {
+        for (int twos = 0; twos <= TERRACE_TWO_TOPS; twos++) {
+          if (!reach[fours][twos]) continue;
+          for (int useFours = 0; fours + useFours <= TERRACE_FOUR_TOPS; useFours++) {
+            for (int useTwos = 0; twos + useTwos <= TERRACE_TWO_TOPS; useTwos++) {
+              int seats = useFours * 4 + useTwos * 2;
+              // Only minimal combinations: dropping any one table would leave too few seats.
+              boolean minimal = seats >= places * 2 && (useFours == 0 || seats - 4 < places * 2) && (useTwos == 0 || seats - 2 < places * 2);
+              if (minimal) { next[fours + useFours][twos + useTwos] = true; any = true; }
+            }
+          }
+        }
+      }
+      if (!any) return false;
+      reach = next;
+    }
+    return true;
+  }
+
+  private static String hm(String time) { return time == null || time.length() <= 5 ? time : time.substring(0, 5); }
+
+  /** Whether a new terrace party of `tables` places fits the furniture throughout [start, end). */
+  public static boolean terraceSplitAllowed(List<TerraceParty> others, String start, String end, int tables) {
+    String from = hm(start);
+    String to = hm(end);
+    // The number of parties only grows when one starts, so checking each start point is enough.
+    List<String> points = new ArrayList<>();
+    points.add(from);
+    for (TerraceParty other : others) {
+      String otherStart = hm(other.start());
+      if (otherStart.compareTo(from) > 0 && otherStart.compareTo(to) < 0) points.add(otherStart);
+    }
+    for (String point : points) {
+      List<Integer> parties = new ArrayList<>();
+      parties.add(tables);
+      for (TerraceParty other : others) if (hm(other.start()).compareTo(point) <= 0 && hm(other.end()).compareTo(point) > 0) parties.add(other.tables());
+      if (!terraceFurnitureFits(parties)) return false;
+    }
+    return true;
+  }
+
+  public static ApiException terraceFull() {
+    return new ApiException(409, "The terrace is already split into the most tables it can hold at this time (4 four-seat and 4 two-seat). Please join tables, choose another time or another area.", "TERRACE_SPLIT_LIMIT");
   }
 
   public static String hashOtp(String otp) {

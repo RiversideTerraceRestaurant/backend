@@ -151,28 +151,62 @@ public class ReservationService {
     return ids;
   }
 
-  public List<ObjectNode> availability(String area, String date, String startTime, String endTime) {
+  /** Whether a pending booking still holds its tables (verified, or its OTP has not expired). */
+  private boolean holding(JsonNode booking, long time) {
+    return Json.bool(booking, "email_verified") || parseTimestamp(Json.str(booking, "otp_expires_at")) > time;
+  }
+
+  private static List<ReservationRules.TerraceParty> terraceParties(JsonNode bookings, Long excludeId, java.util.function.Predicate<JsonNode> holding) {
+    List<ReservationRules.TerraceParty> parties = new ArrayList<>();
+    for (JsonNode booking : bookings) {
+      if (!"TERRACE".equals(Json.str(booking, "area")) || !holding.test(booking)) continue;
+      if (excludeId != null && excludeId == booking.get("id").asLong()) continue;
+      int tables = Json.list(booking.get("booking_tables")).size();
+      if (tables > 0) parties.add(new ReservationRules.TerraceParty(Json.str(booking, "start_time"), Json.str(booking, "end_time"), tables));
+    }
+    return parties;
+  }
+
+  /** Rejects a terrace booking when the terrace cannot be split into one more table at that time. */
+  private void assertTerraceSplit(Long excludeId, String area, String date, String startTime, String endTime, int tables) {
+    if (!"TERRACE".equals(area)) return;
+    JsonNode bookings = unwrapDb(requireDb().from("bookings").select("id, area, status, start_time, end_time, email_verified, otp_expires_at, booking_tables(table_id)")
+      .eq("booking_date", date).eq("area", "TERRACE").in("status", ReservationRules.BLOCKING).execute());
+    long time = clock.get().toEpochMilli();
+    if (!ReservationRules.terraceSplitAllowed(terraceParties(bookings, excludeId, booking -> holding(booking, time)), startTime, endTime, tables)) {
+      throw ReservationRules.terraceFull();
+    }
+  }
+
+  public List<ObjectNode> availability(String area, String date, String startTime, String endTime) { return availability(area, date, startTime, endTime, 1); }
+
+  /** Tables of an area with their status at that time; FULL when the terrace cannot take one more party of `guests`. */
+  public List<ObjectNode> availability(String area, String date, String startTime, String endTime, int guests) {
     ReservationRules.validateTimeRange(startTime, endTime);
     ReservationRules.validateNotPast(date, startTime, restaurantNow());
     CompletableFuture<PostgrestResult> tables = CompletableFuture.supplyAsync(() ->
       requireDb().from("restaurant_tables").select("*").eq("area", area).eq("active", true).order("id").execute(), Async.EXECUTOR);
     CompletableFuture<PostgrestResult> busy = CompletableFuture.supplyAsync(() ->
-      requireDb().from("bookings").select("status, email_verified, otp_expires_at, booking_tables(table_id)").eq("booking_date", date).in("status", ReservationRules.BLOCKING).execute(), Async.EXECUTOR);
+      requireDb().from("bookings").select("id, area, status, start_time, end_time, email_verified, otp_expires_at, booking_tables(table_id)").eq("booking_date", date).in("status", ReservationRules.BLOCKING).execute(), Async.EXECUTOR);
     PostgrestResult tableResult = Async.join(tables);
     PostgrestResult busyResult = Async.join(busy);
     Map<Long, String> statuses = new HashMap<>();
     long time = clock.get().toEpochMilli();
-    for (JsonNode booking : unwrapDb(busyResult)) {
-      if (!Json.bool(booking, "email_verified") && !(parseTimestamp(Json.str(booking, "otp_expires_at")) > time)) continue;
+    JsonNode busyRows = unwrapDb(busyResult);
+    for (JsonNode booking : busyRows) {
+      if (!holding(booking, time)) continue;
       String derived = "APPROVED".equals(Json.str(booking, "status")) ? "RESERVED" : "HOLD";
       for (JsonNode link : Json.list(booking.get("booking_tables"))) {
         long tableId = link.get("table_id").asLong();
         if (!"RESERVED".equals(statuses.get(tableId))) statuses.put(tableId, derived);
       }
     }
+    boolean terraceFull = "TERRACE".equals(area) && !ReservationRules.terraceSplitAllowed(
+      terraceParties(busyRows, null, booking -> holding(booking, time)), startTime, endTime, ReservationRules.terraceTablesFor(guests));
     List<ObjectNode> result = new ArrayList<>();
     for (JsonNode row : unwrapDb(tableResult)) {
       String derived = statuses.get(row.get("id").asLong());
+      if (derived == null && terraceFull && "AVAILABLE".equals(Json.str(row, "status"))) derived = "FULL";
       result.add(ReservationRules.toTable(row, derived != null ? derived : row.get("status")));
     }
     result.sort(ReservationRules.BY_NUMBER);
@@ -180,13 +214,14 @@ public class ReservationService {
   }
 
   public List<ObjectNode> availability(JsonNode input) {
-    return availability(Json.str(input, "area"), Json.str(input, "date"), Json.str(input, "startTime"), Json.str(input, "endTime"));
+    JsonNode guests = Json.get(input, "guests");
+    return availability(Json.str(input, "area"), Json.str(input, "date"), Json.str(input, "startTime"), Json.str(input, "endTime"), guests == null ? 1 : guests.asInt());
   }
 
   public ObjectNode suggest(JsonNode input) {
     int guests = input.get("guests").asInt();
     for (String candidate : ReservationRules.suggestionAreas(Json.str(input, "seating"), guests)) {
-      List<ObjectNode> available = availability(candidate, Json.str(input, "date"), Json.str(input, "startTime"), Json.str(input, "endTime"))
+      List<ObjectNode> available = availability(candidate, Json.str(input, "date"), Json.str(input, "startTime"), Json.str(input, "endTime"), guests)
         .stream().filter(table -> "AVAILABLE".equals(Json.str(table, "status"))).toList();
       List<ObjectNode> tables = ReservationRules.bestTableGroup(candidate, available, guests);
       if (!tables.isEmpty()) {
@@ -219,6 +254,7 @@ public class ReservationService {
     if (!mailer.configured()) throw new ApiException(503, "Online booking is temporarily unavailable. Please contact the restaurant.");
     List<Long> tableIds = ids(input.get("tableIds"));
     ReservationRules.validateTablesForBooking(loadTables(tableIds), Json.str(input, "area"), guests);
+    assertTerraceSplit(null, Json.str(input, "area"), Json.str(input, "bookingDate"), Json.str(input, "startTime"), Json.str(input, "endTime"), new LinkedHashSet<>(tableIds).size());
     String otp = otp();
     String expiresAt = iso(clock.get().plusSeconds(ReservationRules.OTP_TTL_SECONDS));
     String verificationId = UUID.randomUUID().toString();
@@ -349,6 +385,7 @@ public class ReservationService {
     ReservationRules.validateTimeRange(Json.str(input, "startTime"), Json.str(input, "endTime"));
     List<Long> tableIds = ids(input.get("tableIds"));
     ReservationRules.validateTablesForBooking(loadTables(tableIds), Json.str(input, "area"), input.get("numberOfGuests").asInt());
+    assertTerraceSplit(null, Json.str(input, "area"), Json.str(input, "bookingDate"), Json.str(input, "startTime"), Json.str(input, "endTime"), new LinkedHashSet<>(tableIds).size());
     long id = save(null, Json.obj(
       "customer_name", input.get("customerName"), "customer_phone", orElse(input.get("customerPhone"), ReservationRules.PLACEHOLDER_PHONE),
       "customer_email", orElse(input.get("customerEmail"), ReservationRules.PLACEHOLDER_EMAIL), "booking_date", input.get("bookingDate"),
@@ -364,6 +401,10 @@ public class ReservationService {
     ObjectNode current = booking(id);
     List<Long> tableIds = ids(input.get("tableIds"));
     ReservationRules.validateTablesForBooking(loadTables(tableIds), Json.str(input, "area"), input.get("numberOfGuests").asInt());
+    // Cancelled and rejected bookings hold no tables; they are checked again when restored.
+    if (ReservationRules.BLOCKING.contains(Json.str(input, "status") != null ? Json.str(input, "status") : Json.str(current, "status"))) {
+      assertTerraceSplit(id, Json.str(input, "area"), Json.str(input, "bookingDate"), Json.str(input, "startTime"), Json.str(input, "endTime"), new LinkedHashSet<>(tableIds).size());
+    }
     save(id, Json.obj(
       "customer_name", input.get("customerName"), "customer_phone", orElse(input.get("customerPhone"), current.get("customerPhone")),
       "customer_email", orElse(input.get("customerEmail"), current.get("customerEmail")), "booking_date", input.get("bookingDate"),
@@ -387,6 +428,10 @@ public class ReservationService {
   }
 
   public ObjectNode approve(long id) {
+    ObjectNode current = booking(id);
+    if (!ReservationRules.BLOCKING.contains(Json.str(current, "status"))) {
+      assertTerraceSplit(id, Json.str(current, "area"), Json.str(current, "bookingDate"), Json.str(current, "startTime"), Json.str(current, "endTime"), Json.list(current.get("tables")).size());
+    }
     transition(id, Json.obj("status", "APPROVED", "approved_at", iso(clock.get())), "overlap", false);
     ObjectNode booking = booking(id);
     String warning = notify("approved", booking);

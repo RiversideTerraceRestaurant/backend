@@ -39,7 +39,11 @@ class ReservationRulesTest {
     assertDoesNotThrow(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(1), TERRACE.get(2)), "TERRACE", 4));
     assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(0), TERRACE.get(1)), "TERRACE", 2)).contains("only one table"));
     assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(0), TERRACE.get(2)), "TERRACE", 4)).contains("adjacent"));
-    assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(5), TERRACE.get(6)), "TERRACE", 4)).contains("T6 and T7"));
+    assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(5), TERRACE.get(6)), "TERRACE", 4)).contains("same column"));
+    assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(table(200, "S4", "SORRENTO"), table(201, "S5", "SORRENTO")), "SORRENTO", 4)).contains("same column"));
+    assertTrue(message(() -> ReservationRules.validateTablesForBooking(TERRACE.subList(6, 9), "TERRACE", 7)).contains("at most 6"));
+    assertTrue(message(() -> ReservationRules.validateTablesForBooking(TERRACE.subList(6, 9), "TERRACE", 4)).contains("required number"));
+    assertDoesNotThrow(() -> ReservationRules.validateTablesForBooking(TERRACE.subList(6, 9), "TERRACE", 5));
     assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(TERRACE.get(0)), "TERRACE", 3)).contains("not enough"));
     assertTrue(message(() -> ReservationRules.validateTablesForBooking(TERRACE.subList(0, 4), "TERRACE", 6)).contains("between 1 and 3"));
     assertTrue(message(() -> ReservationRules.validateTablesForBooking(List.of(VERONA.get(0)), "VERONA", 2)).contains("Verona"));
@@ -65,6 +69,32 @@ class ReservationRulesTest {
     List<ObjectNode> lowVerona = new ArrayList<>(VERONA.stream().filter(table -> table.get("id").asInt() < 110).toList());
     assertEquals(List.of("V8", "V9", "V10"), numbers(ReservationRules.bestTableGroup("VERONA", lowVerona, 6)));
     assertTrue(ReservationRules.bestTableGroup("TERRACE", List.of(TERRACE.get(0), TERRACE.get(2)), 4).isEmpty());
+  }
+
+  @Test
+  void terraceSplitsIntoAtMostFourFourSeatAndFourTwoSeatTables() {
+    assertEquals(1, ReservationRules.terraceTablesFor(2));
+    assertEquals(2, ReservationRules.terraceTablesFor(3));
+    assertEquals(3, ReservationRules.terraceTablesFor(6));
+    // Finest split: 4 tables for 4 and 4 tables for 2.
+    assertTrue(ReservationRules.terraceFurnitureFits(List.of(2, 2, 2, 2, 1, 1, 1, 1)));
+    // Eight couples still fit (four sit at 4-seat tables), a ninth party does not.
+    assertTrue(ReservationRules.terraceFurnitureFits(List.of(1, 1, 1, 1, 1, 1, 1, 1)));
+    assertFalse(ReservationRules.terraceFurnitureFits(List.of(1, 1, 1, 1, 1, 1, 1, 1, 1)));
+    assertFalse(ReservationRules.terraceFurnitureFits(List.of(2, 2, 2, 2, 1, 1, 1, 1, 1)));
+    assertTrue(ReservationRules.terraceFurnitureFits(List.of(3, 3, 3, 3)));
+    assertFalse(ReservationRules.terraceFurnitureFits(List.of(3, 3, 3, 3, 1)));
+
+    List<ReservationRules.TerraceParty> evening = new ArrayList<>();
+    for (int i = 0; i < 4; i++) evening.add(new ReservationRules.TerraceParty("18:00", "20:00", 2));
+    for (int i = 0; i < 4; i++) evening.add(new ReservationRules.TerraceParty("18:00:00", "20:00:00", 1));
+    assertFalse(ReservationRules.terraceSplitAllowed(evening, "19:00", "21:00", 1));
+    assertTrue(ReservationRules.terraceSplitAllowed(evening, "20:00", "22:00", 1));
+    // A party arriving later inside the new booking's window still counts.
+    List<ReservationRules.TerraceParty> later = new ArrayList<>(evening.subList(0, 7));
+    later.add(new ReservationRules.TerraceParty("19:00", "22:00", 1));
+    assertTrue(ReservationRules.terraceSplitAllowed(later, "17:00", "18:30", 1));
+    assertFalse(ReservationRules.terraceSplitAllowed(later, "17:00", "20:00", 1));
   }
 
   @Test
