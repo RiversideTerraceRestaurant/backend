@@ -185,6 +185,11 @@ public final class RecommendationService {
       }
     }
     onState.accept(ChatState.with(menuContext, memory, questions));
+    // Unrelated questions get a fixed apology instead of falling through to a default menu search.
+    if ("off_topic".equals(Json.str(intent, "topic"))) {
+      return Json.obj("reply", RecommendationPrompts.OFF_TOPIC.getOrDefault(language(), RecommendationPrompts.OFF_TOPIC.get("en")),
+        "items", Json.arr(), "mode", "ai", "preferences", preferences, "language", language());
+    }
     if (!"budget".equals(Json.str(intent, "clarificationReason"))) intent = spread(intent, "clarification", "");
     MenuQueryResolver.Plan plan = MenuQueryResolver.resolve(intent, input, menuContext, queryMode, searchTerms, beverageRequest, null);
     intent = plan.intent();
